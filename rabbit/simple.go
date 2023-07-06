@@ -36,11 +36,11 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 
 // Publish 直接模式,生产者.
 func (r *RabbitMQSimple) Publish(message string) (err error) {
-	// 1 申请队列，如不存在，则自动创建之，存在，则路过。
+	// 1 声明队列，如不存在，则自动创建之，存在，则路过。
 	_, err = r.channel.QueueDeclare(
-		r.QueueName,
-		false,
-		false,
+		r.QueueName, // 队列名字
+		false,       //消息是否持久化
+		false,       // 不使用时自动删除
 		false,
 		false,
 		nil,
@@ -50,9 +50,10 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 	}
 
 	// 2 发送消息到队列中
-	err = r.channel.Publish(
-		r.ExchangeName,
-		r.QueueName,
+	err = r.channel.PublishWithContext(
+		r.ctx,
+		r.ExchangeName, // 交换机名称
+		r.QueueName,    // 路由参数， 这里使用队列的名字作为路由参数
 		false,
 		false,
 		amqp.Publishing{
@@ -82,9 +83,9 @@ func (r *RabbitMQSimple) Consume() (consumeChan <-chan amqp.Delivery, err error)
 
 	// 2 接收消息
 	consumeChan, err = r.channel.Consume(
-		q.Name,
-		"",   // 用来区分多个消费者
-		true, // 是否自动应答,告诉我已经消费完了
+		q.Name, // 队列名
+		"",     // 用来区分多个消费者， 消费者唯一id，不填，则自动生成一个唯一值
+		true,   // 是否自动应答,告诉我已经消费完了
 		false,
 		false, // 若设置为true,则表示为不能将同一个connection中发送的消息传递给这个connection中的消费者.
 		false, // 消费队列是否设计阻塞
