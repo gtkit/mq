@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -33,6 +33,7 @@ type RabbitMQ struct {
 	Key          string           // Binding Key/Routing Key, Simple模式 几乎用不到
 	MqURL        string           // 连接信息-amqp://账号:密码@地址:端口号/-amqp://guest:guest@127.0.0.1:5672/
 	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // RabbitMQInterface 定义RabbitMQ实例的接口
@@ -42,30 +43,38 @@ type RabbitMQInterface interface {
 	Consume() (consumeChan <-chan amqp.Delivery, err error)
 }
 
-var once sync.Once
-
 // NewRabbitMQ 创建一个RabbitMQ实例
-func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (rabbitmq *RabbitMQ, err error) {
+func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
 	fmt.Println("--------- NewRabbitMQ -------------")
 
-	rabbitmq = &RabbitMQ{
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	mq = &RabbitMQ{
 		QueueName:    queueName,
 		ExchangeName: exchangeName,
 		Key:          key,
 		MqURL:        mqUrl,
-		ctx:          context.Background(),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	// 创建rabbitmq连接
-	rabbitmq.conn, err = amqp.Dial(rabbitmq.MqURL)
+	config := amqp.Config{
+		Vhost:      "/",
+		Properties: amqp.NewConnectionProperties(),
+	}
+	config.Properties.SetClientConnectionName("producer-with-confirms")
+
+	// rabbitmq.conn, err = amqp.Dial(rabbitmq.MqURL)
+	mq.conn, err = amqp.DialConfig(mq.MqURL, config)
 	if err != nil {
 		return nil, err
 	}
+	mq.conn.ConnectionState()
 	//
-	rabbitmq.channel, err = rabbitmq.conn.Channel()
+	mq.channel, err = mq.conn.Channel()
 	if err != nil {
 		return nil, err
 	}
-	return rabbitmq, nil
+	return
 }
 
 // Destroy 断开channel和connection
@@ -73,6 +82,10 @@ func (r *RabbitMQ) Destroy() {
 
 	r.channel.Close()
 	r.conn.Close()
+	r.cancel()
 	log.Printf("%s,%s is closed!!!", r.ExchangeName, r.QueueName)
 
+}
+func ParseUri(uri string) (amqp.URI, error) {
+	return amqp.ParseURI(uri)
 }
