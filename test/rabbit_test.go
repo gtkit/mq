@@ -2,6 +2,7 @@
 package test
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"testing"
@@ -17,11 +18,13 @@ func TestSimpleMq(t *testing.T) {
 }
 func example12() {
 	rabbitmq1, err1 := rabbit.NewRabbitMQSimple("queue1", MQURL)
+	go rabbitmq1.NotifyClose()
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
 	rabbitmq2, err2 := rabbit.NewRabbitMQSimple("queue1", MQURL)
+	go rabbitmq2.NotifyClose()
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -30,14 +33,17 @@ func example12() {
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
-			rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			if err != nil {
+				fmt.Println("pulish err: ", err)
+			}
 		}
 	}()
 
 	go func() {
 		msgs, err3 := rabbitmq2.Consume()
 		if err3 != nil {
-			log.Println(err3)
+			fmt.Println("consume err: ", err3)
 		}
 		for d := range msgs {
 
