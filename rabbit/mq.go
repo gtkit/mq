@@ -41,8 +41,8 @@ type RabbitMQ struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 
-	notifyConfirm chan amqp.Confirmation //确认发送到mq的channel
-	notifyReturn  chan amqp.Return       //确认入列成功的channel
+	notifyConfirm chan amqp.Confirmation // 确认发送到mq的channel
+	notifyReturn  chan amqp.Return       // 确认入列成功的channel
 	notifyClose   chan *amqp.Error       // 如果异常关闭，会接受数据
 }
 
@@ -78,15 +78,13 @@ func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	if err != nil {
 		return nil, err
 	}
-	//mq.conn.ConnectionState()
-	//
+	// mq.conn.ConnectionState()
+
 	mq.channel, err = mq.conn.Channel()
 	if err != nil {
 		return nil, err
 	}
-	//if err := mq.channel.Confirm(false); err != nil {
-	//	return nil, err
-	//}
+
 	return
 }
 
@@ -108,43 +106,47 @@ func (r *RabbitMQ) SetConfirm() {
 	r.notifyConfirm = r.channel.NotifyPublish(make(chan amqp.Confirmation))
 }
 
-// ListenConfirm 确认消息成功发布到rabbitmq
+// ListenConfirm 确认消息成功发布到rabbitmq channel,即消息从生产者到 Broker
 func (r *RabbitMQ) ListenConfirm() {
-	ret := <-r.notifyConfirm
-	if ret.Ack {
-		log.Println("confirm:消息发送成功")
-	} else {
-		//这里表示消息发送到mq失败,可以处理失败流程
-		log.Println("confirm:消息发送失败")
+	for c := range r.notifyConfirm {
+		if c.Ack {
+			log.Println("confirm:消息发送成功")
+		} else {
+			// 这里表示消息发送到mq失败,可以处理失败流程
+			log.Println("confirm:消息发送失败")
+		}
 	}
 }
 func (r *RabbitMQ) NotifyClose() {
 	r.notifyClose = r.channel.NotifyClose(make(chan *amqp.Error))
-	ret := <-r.notifyClose
-	if ret != nil {
+	ret, ok := <-r.notifyClose
+	if ret != nil || !ok || r.channel.IsClosed() {
 		log.Println("------notifyClose error:", ret.Error())
+		_ = r.channel.Close() // close again, ensure closed flag set when connection closed
 	}
 }
 
-// NotifyReturn  确保消息入列成功
+// NotifyReturn  确保消息从交换机到队列入列成功
 func (r *RabbitMQ) NotifyReturn() {
-	//前提需要设定Publish的mandatory为true
+	// 前提需要设定Publish的mandatory为true
 	r.notifyReturn = r.channel.NotifyReturn(make(chan amqp.Return))
-	go r.listenReturn() //使用协程执行
+	go r.listenReturn() // 使用协程执行
 }
 
 // 消息是否正确入列
 func (r *RabbitMQ) listenReturn() {
 	log.Println("---- 监听确保消息入列成功----")
 	ret := <-r.notifyReturn
-	//这里是OK使用延迟交换机， 如果没有使用延迟交换机去掉_, ok :=ret.Headers["x-delay"] 和 if中的ok
-	//_, ok := ret.Headers["x-delay"]
-	//if string(ret.Body) != "" && !ok {
-	log.Println("----string(ret.Body)-----", string(ret.Body))
-	if string(ret.Body) != "" {
+	// 这里是OK使用延迟交换机， 如果没有使用延迟交换机去掉_, ok :=ret.Headers["x-delay"] 和 if中的ok
+	_, ok := ret.Headers["x-delay"]
+	if string(ret.Body) != "" && !ok {
 		log.Println("消息没有正确入列:", string(ret.Body))
-	} else {
-		log.Println("消息正确入列:", string(ret.Body))
+	}
+	for p := range r.notifyReturn {
+		log.Println("---- 监听确保消息入列成功----", p)
+		if string(p.Body) != "" {
+			log.Println("消息没有正确入列:", string(p.Body))
+		}
 	}
 }
 

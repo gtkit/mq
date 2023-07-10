@@ -42,12 +42,15 @@ func example12() {
 
 	go func() {
 		msgs, err3 := rabbitmq2.Consume()
+
 		if err3 != nil {
 			fmt.Println("consume err: ", err3)
 		}
 		for d := range msgs {
-
-			log.Printf("接受到了：%s", d.Body)
+			// 判断messageid是否存在redis中了,避免重复消费
+			did := d.MessageId
+			log.Printf("接受到了：%s, msgId: %s", d.Body, did)
+			// 消费完成后将messageid存入redis集合中
 		}
 	}()
 
