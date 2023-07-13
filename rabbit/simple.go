@@ -14,6 +14,7 @@ import (
 1 Simple模式，最简单最常用的模式
 2 Work模式，一个消息只能被一个消费者消费
 */
+var _ RabbitMQInterface = (*RabbitMQSimple)(nil)
 
 // RabbitMQSimple 简单模式下的RabbitMQ实例
 type RabbitMQSimple struct {
@@ -28,6 +29,7 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 		return nil, errors.New("QueueName and mqUrl is required")
 	}
 	rabbitmq, err := NewRabbitMQ("", queueName, "", mqUrl)
+
 	rabbitmq.SetConfirm()
 
 	if err != nil {
@@ -41,6 +43,11 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 // Publish 直接模式,生产者.
 func (mq *RabbitMQSimple) Publish(message string) (err error) {
 
+	select {
+	case <-mq.ctx.Done():
+		return fmt.Errorf("context cancel publish")
+	default:
+	}
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
 	mq.ListenConfirm()
 
@@ -58,8 +65,10 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 		return err
 	}
 	// confirmsCh := make(chan *amqp.DeferredConfirmation)
+
 	// 2 发送消息到队列中
-	err = mq.channel.PublishWithContext(
+	msgId := uuid.New().String()
+	return mq.channel.PublishWithContext(
 		mq.ctx,
 		mq.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
 		mq.QueueName,    // 路由参数， 这里使用队列的名字作为路由参数
@@ -70,10 +79,10 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 			// 消息内容持久化，这个很关键
 			// DeliveryMode: amqp.Persistent,
 			ContentType: "text/plain",
-			MessageId:   uuid.New().String(),
+			MessageId:   msgId,
 			Body:        []byte(message),
 		})
-	return err
+
 }
 
 // Consume 直接模式，消费者
@@ -109,18 +118,22 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		case <-mq.Ctx().Done():
 			fmt.Println("======ctx done==========")
 			_ = msg.Reject(true)
-			return fmt.Errorf("context cancel")
+			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
-		fmt.Println("-----messageId: ", msg.MessageId)
+		//fmt.Println("-----messageId: ", msg.MessageId)
 		err = handler(msg.Body)
 		if err != nil {
-			fmt.Println("--------handler error: ", err)
 			_ = msg.Reject(true)
 			continue
 		}
-		_ = msg.Ack(false)
+		err = msg.Ack(false)
+		if err != nil {
+
+			continue
+		}
+
 	}
 
 	return nil

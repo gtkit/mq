@@ -36,6 +36,7 @@ func example12() {
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 			if err != nil {
 				fmt.Println("pulish err: ", err)
+				return
 			}
 		}
 	}()
@@ -44,6 +45,7 @@ func example12() {
 		err := rabbitmq2.Consume(doConsumeMsg)
 		if err != nil {
 			fmt.Println("----Consume error: ", err)
+			return
 		}
 
 	}()

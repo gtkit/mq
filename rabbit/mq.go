@@ -51,13 +51,11 @@ type RabbitMQ struct {
 // 每种RabbitMQ实例都有发布和消费两种功能
 type RabbitMQInterface interface {
 	Publish(message string) (err error)
-	Consume() (consumeChan <-chan amqp.Delivery, err error)
+	Consume(handler func([]byte) error) (err error)
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
 func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
-	fmt.Println("--------- NewRabbitMQ -------------")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	mq = &RabbitMQ{
 		QueueName:    queueName,
@@ -74,7 +72,6 @@ func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	}
 	config.Properties.SetClientConnectionName("producer-with-confirms")
 
-	// rabbitmq.conn, err = amqp.Dial(rabbitmq.MqURL)
 	mq.conn, err = amqp.DialConfig(mq.MqURL, config)
 	if err != nil {
 		return nil, err
