@@ -30,6 +30,7 @@ https://blog.csdn.net/qq_28710983/article/details/105129432#:~:text=%E7%A1%AE%E8
 */
 
 // todo：设置重试的次数
+const delay = 3 // reconnect after delay seconds
 // RabbitMQ RabbitMQ实例
 type RabbitMQ struct {
 	conn         *amqp.Connection // 连接
@@ -42,21 +43,19 @@ type RabbitMQ struct {
 	cancel       context.CancelFunc
 
 	notifyConfirm chan amqp.Confirmation // 确认发送到mq的channel
-	notifyReturn  chan amqp.Return       // 确认入列成功的channel
-	notifyClose   chan *amqp.Error       // 如果异常关闭，会接受数据
+
+	notifyClose chan *amqp.Error // 如果异常关闭，会接受数据
 }
 
 // RabbitMQInterface 定义RabbitMQ实例的接口
 // 每种RabbitMQ实例都有发布和消费两种功能
 type RabbitMQInterface interface {
 	Publish(message string) (err error)
-	Consume() (consumeChan <-chan amqp.Delivery, err error)
+	Consume(handler func([]byte) error) (err error)
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
 func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
-	fmt.Println("--------- NewRabbitMQ -------------")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	mq = &RabbitMQ{
 		QueueName:    queueName,
@@ -73,81 +72,128 @@ func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	}
 	config.Properties.SetClientConnectionName("producer-with-confirms")
 
-	// rabbitmq.conn, err = amqp.Dial(rabbitmq.MqURL)
 	mq.conn, err = amqp.DialConfig(mq.MqURL, config)
 	if err != nil {
 		return nil, err
 	}
-	// mq.conn.ConnectionState()
+
+	// get reconnect connection
+	mq.NotifyConnectionClose(config)
 
 	mq.channel, err = mq.conn.Channel()
 	if err != nil {
 		return nil, err
 	}
+	// auto reconnect channel
+	mq.NotifyChannelClose()
 
 	return
 }
 
-// Destroy 断开channel和connection
-func (r *RabbitMQ) Destroy() {
+func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
+	go func() {
+		for {
+			fmt.Println("---------mq.conn.NotifyClose---------")
+			reason, ok := <-mq.conn.NotifyClose(make(chan *amqp.Error))
+			if !ok {
+				log.Println("connection closed")
+				break
+			}
+			log.Printf("connection closed, reason: %v", reason)
+			for {
+				time.Sleep(delay * time.Second)
+				reconnect, err := amqp.DialConfig(mq.MqURL, config)
+				if err == nil {
+					mq.conn = reconnect
+					log.Println("reconnect success")
+					break
+				}
+				log.Printf("reconnect failed, err: %v", err)
+			}
 
-	r.channel.Close()
-	r.conn.Close()
-	r.cancel()
-	log.Printf("%s,%s is closed!!!", r.ExchangeName, r.QueueName)
+		}
+	}()
+}
+
+// NotifyChannelClose auto reconnect channel
+func (mq *RabbitMQ) NotifyChannelClose() {
+	go func() {
+		for {
+			fmt.Println("---------mq.channel.NotifyClose---------")
+			reason, ok := <-mq.channel.NotifyClose(make(chan *amqp.Error))
+			// exit this goroutine if closed by developer
+			if !ok || mq.channel.IsClosed() {
+				log.Println("channel closed")
+				_ = mq.channel.Close() // close again, ensure closed flag set when connection closed
+				break
+			}
+			log.Printf("channel closed, reason: %v", reason)
+			for {
+				time.Sleep(delay * time.Second)
+				ch, err := mq.conn.Channel()
+				if err == nil {
+					log.Println("channel recreate success")
+					mq.channel = ch
+					break
+				}
+				log.Printf("channel recreate failed, err: %v", err)
+			}
+		}
+	}()
 
 }
 
-func (r *RabbitMQ) SetConfirm() {
-	err := r.channel.Confirm(false)
+// Destroy 断开channel和connection
+func (mq *RabbitMQ) Destroy() {
+	log.Printf("%s,%s is closed!!!", mq.ExchangeName, mq.QueueName)
+	mq.channel.Close()
+	mq.conn.Close()
+	mq.cancel()
+
+}
+
+func (mq *RabbitMQ) Ctx() context.Context {
+	return mq.ctx
+}
+
+func (mq *RabbitMQ) SetConfirm() {
+	err := mq.channel.Confirm(false)
 	if err != nil {
 		log.Println("this.Channel.Confirm  ", err)
 	}
-	r.notifyConfirm = r.channel.NotifyPublish(make(chan amqp.Confirmation))
+	mq.notifyConfirm = mq.channel.NotifyPublish(make(chan amqp.Confirmation))
 }
 
 // ListenConfirm 确认消息成功发布到rabbitmq channel,即消息从生产者到 Broker
-func (r *RabbitMQ) ListenConfirm() {
-	for c := range r.notifyConfirm {
-		if c.Ack {
-			log.Println("confirm:消息发送成功")
-		} else {
-			// 这里表示消息发送到mq失败,可以处理失败流程
-			log.Println("confirm:消息发送失败")
+func (mq *RabbitMQ) ListenConfirm() {
+	go func() {
+		for c := range mq.notifyConfirm {
+			if c.Ack {
+				log.Println("confirm:消息发送成功")
+			} else {
+				// 这里表示消息发送到mq失败,可以处理失败流程
+				log.Println("confirm:消息发送失败")
+			}
 		}
-	}
-}
-func (r *RabbitMQ) NotifyClose() {
-	r.notifyClose = r.channel.NotifyClose(make(chan *amqp.Error))
-	ret, ok := <-r.notifyClose
-	if ret != nil || !ok || r.channel.IsClosed() {
-		log.Println("------notifyClose error:", ret.Error())
-		_ = r.channel.Close() // close again, ensure closed flag set when connection closed
-	}
+	}()
 }
 
 // NotifyReturn  确保消息从交换机到队列入列成功
-func (r *RabbitMQ) NotifyReturn() {
+func (mq *RabbitMQ) NotifyReturn() {
 	// 前提需要设定Publish的mandatory为true
-	r.notifyReturn = r.channel.NotifyReturn(make(chan amqp.Return))
-	go r.listenReturn() // 使用协程执行
-}
+	go func() {
+		// 消息是否正确入列
+		for p := range mq.channel.NotifyReturn(make(chan amqp.Return)) {
+			// 这里是OK使用延迟交换机， 如果没有使用延迟交换机去掉_, ok :=ret.Headers["x-delay"] 和 if中的ok
+			//_, ok := p.Headers["x-delay"]
+			//if string(p.Body) != "" && !ok {
+			if string(p.Body) != "" {
+				log.Println("消息没有正确入列:", string(p.Body), "; MessageId:", p.MessageId)
+			}
 
-// 消息是否正确入列
-func (r *RabbitMQ) listenReturn() {
-	log.Println("---- 监听确保消息入列成功----")
-	ret := <-r.notifyReturn
-	// 这里是OK使用延迟交换机， 如果没有使用延迟交换机去掉_, ok :=ret.Headers["x-delay"] 和 if中的ok
-	_, ok := ret.Headers["x-delay"]
-	if string(ret.Body) != "" && !ok {
-		log.Println("消息没有正确入列:", string(ret.Body))
-	}
-	for p := range r.notifyReturn {
-		log.Println("---- 监听确保消息入列成功----", p)
-		if string(p.Body) != "" {
-			log.Println("消息没有正确入列:", string(p.Body))
 		}
-	}
+	}()
+
 }
 
 func setupCloseHandler(exitCh chan struct{}) {

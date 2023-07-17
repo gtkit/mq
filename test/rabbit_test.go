@@ -18,13 +18,13 @@ func TestSimpleMq(t *testing.T) {
 }
 func example12() {
 	rabbitmq1, err1 := rabbit.NewRabbitMQSimple("queue1", MQURL)
-	go rabbitmq1.NotifyClose()
+
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
 	rabbitmq2, err2 := rabbit.NewRabbitMQSimple("queue1", MQURL)
-	go rabbitmq2.NotifyClose()
+
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -36,24 +36,25 @@ func example12() {
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 			if err != nil {
 				fmt.Println("pulish err: ", err)
+				return
 			}
 		}
 	}()
 
 	go func() {
-		msgs, err3 := rabbitmq2.Consume()
+		err := rabbitmq2.Consume(doConsumeMsg)
+		if err != nil {
+			fmt.Println("----Consume error: ", err)
+			return
+		}
 
-		if err3 != nil {
-			fmt.Println("consume err: ", err3)
-		}
-		for d := range msgs {
-			// 判断messageid是否存在redis中了,避免重复消费
-			did := d.MessageId
-			log.Printf("接受到了：%s, msgId: %s", d.Body, did)
-			// 消费完成后将messageid存入redis集合中
-		}
 	}()
 
 	forever := make(chan bool)
 	<-forever
+}
+
+func doConsumeMsg(msg []byte) error {
+	fmt.Println("-----doConsumeMsg: ", string(msg))
+	return nil
 }
