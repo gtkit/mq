@@ -28,7 +28,10 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 		log.Printf("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", queueName, mqUrl)
 		return nil, errors.New("QueueName and mqUrl is required")
 	}
-	rabbitmq, err := NewRabbitMQ("", queueName, "", mqUrl)
+	rabbitmq, err := newRabbitMQ("", queueName, "", mqUrl)
+	if err != nil {
+		return nil, err
+	}
 
 	rabbitmq.SetConfirm()
 
@@ -122,7 +125,7 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		default:
 
 		}
-		//fmt.Println("-----messageId: ", msg.MessageId)
+		// fmt.Println("-----messageId: ", msg.MessageId)
 		err = handler(msg.Body)
 		if err != nil {
 			_ = msg.Reject(true)
@@ -130,7 +133,6 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		}
 		err = msg.Ack(false)
 		if err != nil {
-
 			continue
 		}
 

@@ -55,7 +55,7 @@ type RabbitMQInterface interface {
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
-func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
+func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	mq = &RabbitMQ{
 		QueueName:    queueName,
@@ -69,6 +69,8 @@ func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	config := amqp.Config{
 		Vhost:      "/",
 		Properties: amqp.NewConnectionProperties(),
+		Heartbeat:  10 * time.Second,
+		Locale:     "en_US",
 	}
 	config.Properties.SetClientConnectionName("producer-with-confirms")
 
@@ -185,8 +187,8 @@ func (mq *RabbitMQ) NotifyReturn() {
 		// 消息是否正确入列
 		for p := range mq.channel.NotifyReturn(make(chan amqp.Return)) {
 			// 这里是OK使用延迟交换机， 如果没有使用延迟交换机去掉_, ok :=ret.Headers["x-delay"] 和 if中的ok
-			//_, ok := p.Headers["x-delay"]
-			//if string(p.Body) != "" && !ok {
+			// _, ok := p.Headers["x-delay"]
+			// if string(p.Body) != "" && !ok {
 			if string(p.Body) != "" {
 				log.Println("消息没有正确入列:", string(p.Body), "; MessageId:", p.MessageId)
 			}
