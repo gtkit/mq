@@ -57,7 +57,7 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 	// 1.申请队列,如果队列不存在，则会自动创建，如果队列存在则跳过创建直接使用  这样的好处保障队列存在，消息能发送到队列当中
 	_, err = mq.channel.QueueDeclare(
 		mq.QueueName, // 队列名字
-		false,        // 进入的消息是否持久化 进入队列如果不消费那么消息就在队列里面 如果重启服务器那么这个消息就没啦 通常设置为false
+		true,         // 进入的消息是否持久化 进入队列如果不消费那么消息就在队列里面 如果重启服务器那么这个消息就没啦 通常设置为false
 		false,        // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
 		false,        // 是否具有排他性
 		false,        // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
@@ -80,10 +80,10 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 		amqp.Publishing{
 			Headers: amqp.Table{},
 			// 消息内容持久化，这个很关键
-			// DeliveryMode: amqp.Persistent,
-			ContentType: "text/plain",
-			MessageId:   msgId,
-			Body:        []byte(message),
+			DeliveryMode: amqp.Persistent,
+			ContentType:  "text/plain",
+			MessageId:    msgId,
+			Body:         []byte(message),
 		})
 
 }
@@ -93,7 +93,7 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 	// 1 申请队列,如果队列不存在则自动创建,存在则跳过
 	q, err := mq.channel.QueueDeclare(
 		mq.QueueName,
-		false, // 是否持久化
+		true,  // 是否持久化
 		false, // 是否自动删除
 		false, // 是否具有排他性
 		false, // 是否阻塞处理
@@ -108,9 +108,9 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		q.Name, // 队列名
 		"",     // 用来区分多个消费者， 消费者唯一id，不填，则自动生成一个唯一值
 		false,  // 是否自动应答,告诉我已经消费完了
-		false,
-		false, // 若设置为true,则表示为不能将同一个connection中发送的消息传递给这个connection中的消费者.
-		false, // 消费队列是否设计阻塞
+		false,  // true 表示这个queue只能被这个consumer访问
+		false,  // 若设置为true,则表示为不能将同一个connection中发送的消息传递给这个connection中的消费者.
+		false,  // 消费队列是否设计阻塞
 		nil,
 	)
 	if err != nil {

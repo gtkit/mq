@@ -158,6 +158,7 @@ func (mq *RabbitMQ) Ctx() context.Context {
 	return mq.ctx
 }
 
+// SetConfirm 设置监听消息发送
 func (mq *RabbitMQ) SetConfirm() {
 	err := mq.channel.Confirm(false)
 	if err != nil {
