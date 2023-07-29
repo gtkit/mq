@@ -12,6 +12,10 @@ import (
 /*
 3 Publish/Subscribe发布订阅模式
 */
+
+// RabbitMQInterface 定义rabbitmq的接口
+var _ RabbitMQInterface = (*RabbitMqSubscription)(nil)
+
 type RabbitMqSubscription struct {
 	*RabbitMQ
 }
@@ -76,7 +80,7 @@ func (mq *RabbitMqSubscription) Publish(message string) (err error) {
 // 订阅模式消费者
 // func (r *RabbitMqSubscription) Consume() (consumeChan <-chan amqp.Delivery, err error) {
 func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) {
-	// 1 试探性创建交换机exchange
+	// 1 创建交换机exchange
 	err = mq.channel.ExchangeDeclare(
 		mq.ExchangeName,
 		"fanout",
@@ -90,7 +94,7 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 		return err
 	}
 
-	// 2 试探性创建队列queue
+	// 2 创建队列queue
 	q, err := mq.channel.QueueDeclare(
 		"", // 随机生产队列名称
 		true,
@@ -133,21 +137,26 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 		select {
 		case <-mq.Ctx().Done():
 			fmt.Println("======ctx done==========")
-			_ = msg.Reject(true)
+			_ = msg.Reject(true) // 拒绝一条消息，true表示将消息重新放回队列
 			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
 		// fmt.Println("-----messageId: ", msg.MessageId)
+		// 处理消息
 		err = handler(msg.Body)
 		// 消费失败处理
 		if err != nil {
-			_ = msg.Reject(true)
-			_ = msg.Nack(true, true)
+			if err := msg.Reject(true); err != nil {
+				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
+				fmt.Println("reject error: ", err)
+			}
 			continue
 		}
-		err = msg.Ack(false) // true: 此交付和同一频道上所有先前未确认的交付将被确认。这对于批量处理交付很有用
-		if err != nil {
+		// 消费成功确认消息
+		if err := msg.Ack(false); err != nil {
+			// 确认一条消息，false表示确认当前消息，true表示确认当前消息和之前所有未确认的消息
+			fmt.Println("ack error: ", err)
 			continue
 		}
 
