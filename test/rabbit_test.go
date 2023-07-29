@@ -68,6 +68,11 @@ func example3() {
 	if err2 != nil {
 		log.Println(err2)
 	}
+	rabbitmq3, err3 := rabbit.NewRabbitMQSub("exchange.example3", MQURL)
+	defer rabbitmq3.Destroy()
+	if err3 != nil {
+		log.Println(err3)
+	}
 
 	go func() {
 		for i := 0; i < 10000; i++ {
@@ -81,7 +86,15 @@ func example3() {
 	}()
 
 	go func() {
-		err := rabbitmq2.Consume(doExample3Msg)
+		err := rabbitmq2.Consume(doExample31Msg)
+		if err != nil {
+			fmt.Println("----example3 Consume error: ", err)
+			return
+		}
+	}()
+
+	go func() {
+		err := rabbitmq3.Consume(doExample32Msg)
 		if err != nil {
 			fmt.Println("----example3 Consume error: ", err)
 			return
@@ -95,7 +108,11 @@ func doConsumeMsg(msg []byte) error {
 	fmt.Println("-----doConsumeMsg: ", string(msg))
 	return nil
 }
-func doExample3Msg(msg []byte) error {
-	fmt.Println("-----Example3 doConsumeMsg: ", string(msg))
+func doExample31Msg(msg []byte) error {
+	fmt.Println("-----Example3-1 doConsumeMsg: ", string(msg))
+	return nil
+}
+func doExample32Msg(msg []byte) error {
+	fmt.Println("-----Example3-2 doConsumeMsg: ", string(msg))
 	return nil
 }
