@@ -71,8 +71,10 @@ func (mq *RabbitMqSubscription) Publish(message string) (err error) {
 		false,
 		false,
 		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(message),
+			ContentType:  "text/plain",
+			DeliveryMode: amqp.Persistent,
+			Body:         []byte(message),
+			Expiration:   mq.MsgExpiration(), // 消息过期时间 单位毫秒
 		})
 
 }
@@ -84,7 +86,7 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 	err = mq.channel.ExchangeDeclare(
 		mq.ExchangeName,
 		"fanout",
-		true,
+		true, // 持久化
 		false,
 		false,
 		false,
@@ -109,10 +111,10 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 
 	// 3 绑定队列到交换机中
 	err = mq.channel.QueueBind(
-		q.Name,
-		"", // 在pub/sub模式下key要为空
-		mq.ExchangeName,
-		false, // 默认为非阻塞即可设置为false
+		q.Name,          // 队列名称
+		"",              // 在pub/sub模式下key要为空
+		mq.ExchangeName, // 交换机名称
+		false,           // 默认为非阻塞即可设置为false
 		nil,
 	)
 	if err != nil {
@@ -121,10 +123,10 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 
 	// 4 消费消息
 	deliveries, err := mq.channel.Consume(
-		q.Name,
-		"",    // 消费者名字，不填自动生成一个
-		false, // 自动向队列确认消息已经处理
-		false, // true 表示这个queue只能被这个consumer访问
+		q.Name, // 队列名称
+		"",     // 消费者名字，不填自动生成一个
+		false,  // 自动向队列确认消息已经处理
+		false,  // true 表示这个queue只能被这个consumer访问
 		false,
 		false,
 		nil,
@@ -135,14 +137,18 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 
 	for msg := range deliveries {
 		select {
-		case <-mq.Ctx().Done():
+		case <-mq.Ctx().Done(): // 通过context控制消费者退出
 			fmt.Println("======ctx done==========")
-			_ = msg.Reject(true) // 拒绝一条消息，true表示将消息重新放回队列
+			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列(死信队列)等措施来处理错误
+			if err := msg.Reject(true); err != nil {
+				fmt.Println("ack error: ", err)
+			}
+
 			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
-		// fmt.Println("-----messageId: ", msg.MessageId)
+
 		// 处理消息
 		err = handler(msg.Body)
 		// 消费失败处理

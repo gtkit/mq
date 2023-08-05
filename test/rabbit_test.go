@@ -37,6 +37,7 @@ func example12() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+
 			if err != nil {
 				fmt.Println("pulish err: ", err)
 				return

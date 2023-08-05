@@ -54,6 +54,17 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
 	mq.ListenConfirm()
 
+	// 死信交换机
+	err = mq.channel.ExchangeDeclare(
+		"dlx.exchange", // 死信交换机名字
+		"fanout",       // 死信交换机类型
+		true,           // 是否持久化
+		false,
+		false,
+		false,
+		nil,
+	)
+
 	// 1.申请队列,如果队列不存在，则会自动创建，如果队列存在则跳过创建直接使用  这样的好处保障队列存在，消息能发送到队列当中
 	_, err = mq.channel.QueueDeclare(
 		mq.QueueName, // 队列名字
@@ -61,7 +72,9 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 		false,        // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
 		false,        // 是否具有排他性
 		false,        // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
-		nil,          // 其他的属性，没有则直接诶传入空即可 nil  nil,
+		amqp.Table{
+			"x-dead-letter-exchange": "dlx.exchange", // 死信交换机
+		}, // 其他的属性，没有则直接诶传入空即可 nil  nil,
 	)
 
 	if err != nil {
@@ -84,6 +97,7 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 			ContentType:  "text/plain",
 			MessageId:    msgId,
 			Body:         []byte(message),
+			Expiration:   mq.MsgExpiration(), // push 时 在消息本体上设置expiration超时时间，单位为毫秒级别 类型为 string
 		})
 
 }
@@ -120,7 +134,10 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		select {
 		case <-mq.Ctx().Done():
 			fmt.Println("======ctx done==========")
-			_ = msg.Reject(true)
+			if err := msg.Reject(true); err != nil {
+				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
+				fmt.Println("reject error: ", err)
+			}
 			return fmt.Errorf("context cancel Consume")
 		default:
 
@@ -128,9 +145,14 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		// fmt.Println("-----messageId: ", msg.MessageId)
 		err = handler(msg.Body)
 		if err != nil {
-			_ = msg.Reject(true)
+			if err := msg.Reject(true); err != nil {
+				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
+				fmt.Println("reject error: ", err)
+			}
+
 			continue
 		}
+
 		err = msg.Ack(false)
 		if err != nil {
 			continue

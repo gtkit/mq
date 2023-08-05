@@ -45,6 +45,8 @@ type RabbitMQ struct {
 	notifyConfirm chan amqp.Confirmation // 确认发送到mq的channel
 
 	notifyClose chan *amqp.Error // 如果异常关闭，会接受数据
+
+	msgExpiration string // 消息过期时间
 }
 
 // RabbitMQInterface 定义RabbitMQ实例的接口
@@ -58,13 +60,15 @@ type RabbitMQInterface interface {
 func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	mq = &RabbitMQ{
-		QueueName:    queueName,
-		ExchangeName: exchangeName,
-		Key:          key,
-		MqURL:        mqUrl,
-		ctx:          ctx,
-		cancel:       cancel,
+		QueueName:     queueName,
+		ExchangeName:  exchangeName,
+		Key:           key,
+		MqURL:         mqUrl,
+		ctx:           ctx,
+		cancel:        cancel,
+		msgExpiration: "4000", // 消息过期时间
 	}
+
 	// 创建rabbitmq连接
 	config := amqp.Config{
 		Vhost:      "/",
@@ -90,6 +94,11 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	mq.NotifyChannelClose()
 
 	return
+}
+
+// MsgExpiration 设置消息过期时间
+func (m *RabbitMQ) MsgExpiration() string {
+	return m.msgExpiration
 }
 
 func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {

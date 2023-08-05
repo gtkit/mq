@@ -54,7 +54,8 @@ func (r *RabbitMqRouting) Publish(message string) (err error) {
 	}
 
 	// 2 发送信息
-	err = r.channel.Publish(
+	err = r.channel.PublishWithContext(
+		r.ctx,
 		r.ExchangeName,
 		// Binding Key
 		r.Key,
@@ -64,7 +65,8 @@ func (r *RabbitMqRouting) Publish(message string) (err error) {
 			// 类型
 			ContentType: "text/plain",
 			// 消息
-			Body: []byte(message),
+			Body:       []byte(message),
+			Expiration: r.MsgExpiration(),
 		})
 	if err != nil {
 		return err
