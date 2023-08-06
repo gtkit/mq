@@ -54,14 +54,13 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
 	mq.ListenConfirm()
 
-	// 死信交换机
-	err = mq.channel.ExchangeDeclare(
-		"dlx.exchange", // 死信交换机名字
-		"fanout",       // 死信交换机类型
-		true,           // 是否持久化
-		false,
-		false,
-		false,
+	// 死信队列
+	_, err = mq.channel.QueueDeclare(
+		"dead-letter-queue-"+mq.QueueName, // 队列名字
+		true,                              // 进入的消息是否持久化 进入队列如果不消费那么消息就在队列里面 如果重启服务器那么这个消息就没啦 通常设置为false
+		false,                             // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
+		false,                             // 是否具有排他性
+		false,                             // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
 		nil,
 	)
 
@@ -73,7 +72,11 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 		false,        // 是否具有排他性
 		false,        // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
 		amqp.Table{
-			"x-dead-letter-exchange": "dlx.exchange", // 死信交换机
+			//"x-message-ttl":          "",
+			"x-dead-letter-exchange": "dead-letter-exchange-" + mq.QueueName, // 死信交换机
+			//"x-dead-letter-routing-key": dlxRouting,  // 死信路由
+			//"x-dead-letter-queue": "dead-letter-queue" + mq.QueueName, // 死信队列
+
 		}, // 其他的属性，没有则直接诶传入空即可 nil  nil,
 	)
 
@@ -91,7 +94,7 @@ func (mq *RabbitMQSimple) Publish(message string) (err error) {
 		true,            // 如果为true 会根据exchange类型和routkey规则，如果无法找到符合条件的队列那么会把发送的消息返还给发送者
 		false,           // 如果为true,当exchange发送消息到队列后发现队列上没有绑定消费者则会把消息返还给发送者
 		amqp.Publishing{
-			Headers: amqp.Table{},
+			//Headers: amqp.Table{},
 			// 消息内容持久化，这个很关键
 			DeliveryMode: amqp.Persistent,
 			ContentType:  "text/plain",
@@ -143,22 +146,30 @@ func (mq *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 
 		}
 		// fmt.Println("-----messageId: ", msg.MessageId)
-		err = handler(msg.Body)
-		if err != nil {
-			if err := msg.Reject(true); err != nil {
+
+		if err := handler(msg.Body); err != nil {
+			fmt.Println("---test handler error----")
+			if err = msg.Reject(true); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				fmt.Println("reject error: ", err)
 			}
+			//mq.DlqConsume(mq.QueueName, "dead-letter-queue-"+mq.QueueName, "", dlxDo)
 
 			continue
 		}
 
-		err = msg.Ack(false)
-		if err != nil {
+		// // 确认一条消息，false表示确认当前消息，true表示确认当前消息和之前所有未确认的消息
+		if err := msg.Ack(false); err != nil {
+			fmt.Println("message ack error:", err, " message id: ", msg.MessageId)
 			continue
 		}
 
 	}
 
+	return nil
+}
+
+func dlxDo(msg []byte) error {
+	fmt.Println("-----dlx message: ", string(msg))
 	return nil
 }

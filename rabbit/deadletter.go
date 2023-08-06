@@ -43,66 +43,71 @@ func (r *RabbitMQ) PublishDelayQueue(queue, message, dlxExchange, routing, expir
 	return nil
 }
 
-func (r *RabbitMQ) ConsumeDelayQueue(queueName, dlxExchange, routing string, f func(interface{})) error {
+// 消费死信队列
+func (r *RabbitMQ) DlqConsume(queueName, dlxExchange, dlxRouting string, handler func([]byte) error) error {
 
-	err := r.channel.ExchangeDeclare(
-		dlxExchange,
-		"direct", // 交换机类型 路由模式接收
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
+	fmt.Println("--------------DlqConsume --------------")
+	// 声明死信交换机
+	if err := r.DlxDeclare(dlxExchange, "fanout"); err != nil {
 		return err
 	}
 
 	// 声明 死信队列（用于与死信交换机绑定）
-	q, err := r.channel.QueueDeclare(
-		queueName,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
+	q, err := r.channel.QueueDeclare(queueName, true, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
 	// 绑定队列到 exchange 中
-	err = r.channel.QueueBind(
-		q.Name,
-		routing,
-		dlxExchange,
-		false,
-		nil)
-	if err != nil {
+	if err := r.channel.QueueBind(q.Name, dlxRouting, dlxExchange, false, nil); err != nil {
 		return err
 	}
 
 	// 消费消息
-	data, err := r.channel.Consume(
-		q.Name,
-		"",
-		false,
+	deliveries, err := r.channel.Consume(q.Name, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+	for msg := range deliveries {
+		select {
+		case <-r.Ctx().Done():
+			if err := msg.Reject(true); err != nil {
+				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
+				fmt.Println("reject error: ", err)
+			}
+			return fmt.Errorf("context cancel Consume")
+		default:
+
+		}
+		if err := handler(msg.Body); err != nil {
+			if err = msg.Reject(true); err != nil {
+				fmt.Println("reject error: ", err)
+			}
+			continue
+		}
+		if err := msg.Ack(false); err != nil {
+			fmt.Println("---消息确认失败：", err)
+			return err
+		}
+
+	}
+	return nil
+
+}
+
+// DlxDeclare 声明死信交换机
+// dlxExchange 死信交换机名称
+// routingKind 死信交换机类型
+func (mq *RabbitMQ) DlxDeclare(dlxExchange, routingKind string) error {
+	fmt.Println("------------------DlxDeclare---------------")
+	// 死信交换机
+	return mq.channel.ExchangeDeclare(
+		dlxExchange, // 死信交换机名字
+		routingKind, // 死信交换机类型
+		true,        // 是否持久化
 		false,
 		false,
 		false,
 		nil,
 	)
-	if err != nil {
-		return err
-	}
-
-	forever := make(chan bool)
-	go func() {
-		for d := range data {
-			fmt.Printf("Received a message: %s\n", d.Body)
-			f(d.Body)
-		}
-	}()
-	<-forever
-	return nil
 }

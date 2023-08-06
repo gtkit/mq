@@ -2,6 +2,7 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -20,13 +21,17 @@ func TestSubMq(t *testing.T) {
 	example3()
 }
 func example12() {
-	rabbitmq1, err1 := rabbit.NewRabbitMQSimple("queue1", MQURL)
+	rabbitmq1, err1 := rabbit.NewRabbitMQSimple("queue111", MQURL)
+	if err := rabbitmq1.DlxDeclare("dead-letter-queue-queue111", "fanout"); err != nil {
+		fmt.Println("----DlxDeclare error:", err)
+
+	}
 
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQSimple("queue1", MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQSimple("queue111", MQURL)
 
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
@@ -52,6 +57,13 @@ func example12() {
 			return
 		}
 
+	}()
+	go func() {
+		err := rabbitmq2.DlqConsume("queue111", "dead-letter-queue-queue111", "", dlxDo)
+		if err != nil {
+			fmt.Println("----Consume error: ", err)
+			return
+		}
 	}()
 
 	forever := make(chan bool)
@@ -107,7 +119,7 @@ func example3() {
 }
 func doConsumeMsg(msg []byte) error {
 	fmt.Println("-----doConsumeMsg: ", string(msg))
-	return nil
+	return errors.New("test dlx error")
 }
 func doExample31Msg(msg []byte) error {
 	fmt.Println("-----Example3-1 doConsumeMsg: ", string(msg))
@@ -115,5 +127,9 @@ func doExample31Msg(msg []byte) error {
 }
 func doExample32Msg(msg []byte) error {
 	fmt.Println("-----Example3-2 doConsumeMsg: ", string(msg))
+	return nil
+}
+func dlxDo(msg []byte) error {
+	fmt.Println("-----dlx message: ", string(msg))
 	return nil
 }
