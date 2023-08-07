@@ -12,7 +12,7 @@ import (
 	"mq/rabbit"
 )
 
-const MQURL = "amqp://guest:guest@127.0.0.1:5672/"
+// const MQURL = "amqp://guest:guest@127.0.0.1:5672/"
 
 func TestSimpleMq(t *testing.T) {
 	example12()
@@ -21,17 +21,18 @@ func TestSubMq(t *testing.T) {
 	example3()
 }
 func example12() {
-	rabbitmq1, err1 := rabbit.NewRabbitMQSimple("queue111", MQURL)
-	if err := rabbitmq1.DlxDeclare("dead-letter-queue-queue111", "fanout"); err != nil {
-		fmt.Println("----DlxDeclare error:", err)
-
-	}
+	var queueName = "queue3"
+	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+	// if err := rabbitmq1.DlxDeclare("dead-letter-queue-queue111", "fanout"); err != nil {
+	// 	fmt.Println("----DlxDeclare error:", err)
+	//
+	// }
 
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQSimple("queue111", MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(queueName, MQURL)
 
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
@@ -59,9 +60,9 @@ func example12() {
 
 	}()
 	go func() {
-		err := rabbitmq2.DlqConsume("queue111", "dead-letter-queue-queue111", "", dlxDo)
+		err := rabbitmq2.DlqConsume("dead-queue", "dead-letter-exchange-"+queueName, "", dlxDo)
 		if err != nil {
-			fmt.Println("----Consume error: ", err)
+			fmt.Println("----DlqConsume error: ", err)
 			return
 		}
 	}()
