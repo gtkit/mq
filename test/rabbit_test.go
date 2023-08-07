@@ -12,7 +12,7 @@ import (
 	"mq/rabbit"
 )
 
-// const MQURL = "amqp://guest:guest@127.0.0.1:5672/"
+const MQURL = "amqp://guest:guest@127.0.0.1:5672/"
 
 func TestSimpleMq(t *testing.T) {
 	example12()
@@ -41,7 +41,7 @@ func example12() {
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			time.Sleep(1 * time.Second)
+			time.Sleep(2 * time.Second)
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 
 			if err != nil {
@@ -59,11 +59,15 @@ func example12() {
 		}
 
 	}()
+	var dlxName = "dead-letter-exchange-" + rabbitmq2.QueueName
 	go func() {
-		err := rabbitmq2.DlqConsume("dead-queue", "dead-letter-exchange-"+queueName, "", dlxDo)
-		if err != nil {
-			fmt.Println("----DlqConsume error: ", err)
-			return
+		for {
+			err := rabbitmq2.DlqConsume("dead-queue", dlxName, "", dlxDo)
+			if err != nil {
+				fmt.Println("----DlqConsume error: ", err)
+				return
+			}
+			time.Sleep(2 * time.Second)
 		}
 	}()
 
