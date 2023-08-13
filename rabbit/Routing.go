@@ -65,8 +65,8 @@ func (r *RabbitMqRouting) Publish(message string) (err error) {
 			// 类型
 			ContentType: "text/plain",
 			// 消息
-			Body:       []byte(message),
-			Expiration: r.MsgExpiration(),
+			Body: []byte(message),
+			//Expiration: r.MsgExpiration(),
 		})
 	if err != nil {
 		return err

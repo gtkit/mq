@@ -60,18 +60,17 @@ type RabbitMQInterface interface {
 func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	mq = &RabbitMQ{
-		QueueName:     queueName,
-		ExchangeName:  exchangeName,
-		Key:           key,
-		MqURL:         mqUrl,
-		ctx:           ctx,
-		cancel:        cancel,
-		msgExpiration: "4000", // 消息过期时间
+		QueueName:    queueName,
+		ExchangeName: exchangeName,
+		Key:          key,
+		MqURL:        mqUrl,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	// 创建rabbitmq连接
 	config := amqp.Config{
-		Vhost:      "/",
+		//Vhost:      "/",
 		Properties: amqp.NewConnectionProperties(),
 		Heartbeat:  10 * time.Second,
 		Locale:     "en_US",
@@ -94,11 +93,6 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	mq.NotifyChannelClose()
 
 	return
-}
-
-// MsgExpiration 设置消息过期时间
-func (m *RabbitMQ) MsgExpiration() string {
-	return m.msgExpiration
 }
 
 func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {

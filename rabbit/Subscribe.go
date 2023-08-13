@@ -74,7 +74,7 @@ func (mq *RabbitMqSubscription) Publish(message string) (err error) {
 			ContentType:  "text/plain",
 			DeliveryMode: amqp.Persistent,
 			Body:         []byte(message),
-			Expiration:   mq.MsgExpiration(), // 消息过期时间 单位毫秒
+			//Expiration:   mq.MsgExpiration(), // 消息过期时间 单位毫秒
 		})
 
 }
