@@ -39,7 +39,7 @@ func NewRabbitMQSub(exchangeName, mqUrl string) (rabbitMqSubscription *RabbitMqS
 }
 
 // 订阅模式发布消息
-func (mq *RabbitMqSubscription) Publish(message string) (err error) {
+func (mq *RabbitMqSubscription) Publish(message string) error {
 	select {
 	case <-mq.ctx.Done():
 		return fmt.Errorf("context cancel publish" + mq.ctx.Err().Error())
@@ -50,16 +50,8 @@ func (mq *RabbitMqSubscription) Publish(message string) (err error) {
 	mq.ListenConfirm()
 
 	// 1 尝试连接交换机
-	err = mq.channel.ExchangeDeclare(
-		mq.ExchangeName,
-		"fanout", // 这里一定要设计为"fanout"也就是广播类型。
-		true,     // 持久化
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
+	if err := mq.exchangeDeclare(); err != nil {
+		logger.Info("Publish exchangeDeclare error: ", err)
 		return err
 	}
 
@@ -79,33 +71,19 @@ func (mq *RabbitMqSubscription) Publish(message string) (err error) {
 
 }
 
-// 订阅模式消费者
-// func (r *RabbitMqSubscription) Consume() (consumeChan <-chan amqp.Delivery, err error) {
-func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) {
+// Consume 订阅模式消费者
+func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) error {
 	// 1 创建交换机exchange
-	err = mq.channel.ExchangeDeclare(
-		mq.ExchangeName,
-		"fanout",
-		true, // 持久化
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
+	logger.Info("----- begin consume----")
+	if err := mq.exchangeDeclare(); err != nil {
+		logger.Info("Consume exchangeDeclare error: ", err)
 		return err
 	}
 
 	// 2 创建队列queue
-	q, err := mq.channel.QueueDeclare(
-		"", // 随机生产队列名称
-		true,
-		false,
-		true, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
-		false,
-		nil,
-	)
+	q, err := mq.queueDeclare()
 	if err != nil {
+		logger.Info("Consume queueDeclare error: ", err)
 		return err
 	}
 
@@ -169,4 +147,26 @@ func (mq *RabbitMqSubscription) Consume(handler func([]byte) error) (err error) 
 	}
 
 	return nil
+}
+
+func (mq *RabbitMqSubscription) exchangeDeclare() error {
+	return mq.channel.ExchangeDeclare(
+		mq.ExchangeName,
+		"fanout", // 这里一定要设计为"fanout"也就是广播类型。
+		true,     // 持久化
+		false,
+		false,
+		false,
+		nil,
+	)
+}
+func (mq *RabbitMqSubscription) queueDeclare() (amqp.Queue, error) {
+	return mq.channel.QueueDeclare(
+		"", // 随机生产队列名称
+		true,
+		false,
+		true, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
+		false,
+		nil,
+	)
 }
