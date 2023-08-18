@@ -2,10 +2,11 @@
 package rabbit
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -86,16 +87,15 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 			ContentType:  "text/plain",
 			MessageId:    msgId,
 			Body:         []byte(message),
-			//Expiration:   r.MsgExpiration(), // push 时 在消息本体上设置expiration超时时间，单位为毫秒级别 类型为 string
 		})
 	if err != nil {
 		fmt.Println("--PublishWithContext error: ", err)
 	}
-	fmt.Println("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
+	log.Println("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
 	return err
 }
 
-// PublishXdl 带有死信队列的发送
+// PublishWithXdl 带有死信交换机的发送
 func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 
 	select {
@@ -149,7 +149,6 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 			ContentType:  "text/plain",
 			MessageId:    msgId,
 			Body:         []byte(message),
-			//Expiration:   r.MsgExpiration(), // push 时 在消息本体上设置expiration超时时间，单位为毫秒级别 类型为 string
 		})
 	if err != nil {
 		fmt.Println("--PublishWithContext error: ", err)
@@ -184,7 +183,7 @@ func (r *RabbitMQSimple) PublishDelay(message string, delayTime string) (err err
 		false,       // 是否具有排他性
 		false,       // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
 		amqp.Table{
-			//"x-message-ttl":          "",
+			// "x-message-ttl":          "",
 			"x-dead-letter-exchange": dlxName, // 死信交换机
 			// "x-dead-letter-routing-key": dlxRouting,  // 死信路由
 			// "x-dead-letter-queue": "dead-letter-queue" + mq.QueueName, // 死信队列
@@ -288,13 +287,12 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 	return nil
 }
 
-// ConsumeXdl 带有死信队列的消费
+// ConsumeWithXdl 带有死信交换机的消费
 func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) {
-	// 1 申请队列,如果队列不存在则自动创建,存在则跳过
+	// 1 声明死信交换机
 	var dlxName = "dlx-" + r.QueueName
-	// 声明死信交换机
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		fmt.Println("--DlqConsume DlxDeclare err: ", err)
+		log.Fatal("--DlqConsume DlxDeclare err: ", err)
 		return err
 	}
 	q, err := r.channel.QueueDeclare(
@@ -304,16 +302,16 @@ func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) 
 		false, // 是否具有排他性
 		false, // 是否阻塞处理
 		amqp.Table{
-			//"x-message-ttl":          "",
+			// "x-message-ttl":          "",
 			"x-dead-letter-exchange": dlxName, // 死信交换机
 			// "x-dead-letter-routing-key": dlxRouting,  // 死信路由
 			// "x-dead-letter-queue": "dead-letter-queue" + mq.QueueName, // 死信队列
 
 		}, // 额外的属性
-		//nil,
+		// nil,
 	)
 	if err != nil {
-		fmt.Println("--Consume QueueDeclare error: ", err)
+		log.Fatal("--Consume QueueDeclare error: ", err)
 		return err
 	}
 
@@ -371,15 +369,14 @@ func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) 
 func (r *RabbitMQSimple) XdlConsume(handler func([]byte) error) error {
 
 	// 死信交换机
-	var dlxName = "dlx-" + r.QueueName
-	// 死信队列
-	var dlqName = "dlq-" + r.QueueName
+	dlxName := "dlx-" + r.QueueName
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		fmt.Println("--DlqConsume DlxDeclare err: ", err)
+		log.Fatal("--DlqConsume DlxDeclare err: ", err)
 		return err
 	}
 
 	// 声明 死信队列（用于与死信交换机绑定）
+	dlqName := "dlq-" + r.QueueName
 	q, err := r.channel.QueueDeclare(dlqName, true, false, false, false, nil)
 	if err != nil {
 		fmt.Println("--DlqConsume QueueDeclare err: ", err)
@@ -430,22 +427,17 @@ func (r *RabbitMQSimple) XdlConsume(handler func([]byte) error) error {
 // ConsumeDelay 消费延迟队列
 func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
 
-	// 1 申请队列,如果队列不存在则自动创建,存在则跳过
-	var dlxName = r.QueueName + "-delay-Ex"
-
-	// 声明死信交换机
+	// 1 声明死信交换机
+	dlxName := r.QueueName + "-delay-Ex"
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		fmt.Println("--DlqConsume DlxDeclare err: ", err)
-		return err
+		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
 	}
 
 	// 声明 延迟死信队列（用于与死信交换机绑定）
-	var dlxQueue = r.QueueName + "-delay"
+	dlxQueue := r.QueueName + "-delay"
 	q, err := r.channel.QueueDeclare(dlxQueue, true, false, false, false, nil)
 	if err != nil {
-
-		fmt.Println("--DlqConsume QueueDeclare err: ", err)
-		return err
+		return errors.WithMessage(err, "--DlqConsume QueueDeclare err")
 	}
 
 	// 绑定队列到 exchange 中
