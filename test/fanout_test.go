@@ -11,8 +11,9 @@ import (
 	"mq/rabbit"
 )
 
-// const MQURL = "amqp://guest:guest@127.0.0.1:5672/"
-const MQURL = "amqp://xiaozhaofu:123456@10.10.10.44:5672/"
+const MQURL = "amqp://guest:guest@127.0.0.1:5672/"
+
+//const MQURL = "amqp://xiaozhaofu:123456@10.10.10.44:5672/"
 
 func TestSubMq(t *testing.T) {
 	example3()

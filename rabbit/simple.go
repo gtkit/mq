@@ -32,14 +32,13 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 	}
 	rabbitmq, err := newRabbitMQ("", queueName, "", mqUrl)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "simple newRabbitMQ error")
 	}
 
-	rabbitmq.SetConfirm()
-
-	if err != nil {
-		return nil, err
+	if err = rabbitmq.SetConfirm(); err != nil {
+		return nil, errors.WithMessage(err, "simple rabbitmq.SetConfirm error")
 	}
+
 	return &RabbitMQSimple{
 		rabbitmq,
 	}, nil
@@ -47,7 +46,6 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 
 // Publish 直接模式,生产者.
 func (r *RabbitMQSimple) Publish(message string) (err error) {
-
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish")
@@ -57,24 +55,20 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 	r.ListenConfirm()
 
 	// 1.申请队列,如果队列不存在，则会自动创建，如果队列存在则跳过创建直接使用  这样的好处保障队列存在，消息能发送到队列当中
-	_, err = r.channel.QueueDeclare(
+	if _, err = r.channel.QueueDeclare(
 		r.QueueName, // 队列名字
 		true,        // 进入的消息是否持久化 进入队列如果不消费那么消息就在队列里面 如果重启服务器那么这个消息就没啦 通常设置为false
 		false,       // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
 		false,       // 是否具有排他性
 		false,       // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
 		nil,
-	)
-
-	if err != nil {
-		fmt.Println("--QueueDeclare error:", err)
-		return err
+	); err != nil {
+		return errors.WithMessage(err, "Simple QueueDeclare error")
 	}
-	// confirmsCh := make(chan *amqp.DeferredConfirmation)
 
 	// 2 发送消息到队列中
 	msgId := uuid.New().String()
-	err = r.channel.PublishWithContext(
+	if err = r.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
 		r.QueueName,    // 路由参数， 这里使用队列的名字作为路由参数
@@ -87,17 +81,16 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 			ContentType:  "text/plain",
 			MessageId:    msgId,
 			Body:         []byte(message),
-		})
-	if err != nil {
-		fmt.Println("--PublishWithContext error: ", err)
+		}); err != nil {
+		log.Println("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
+		return errors.WithMessage(err, "Simple PublishWithContext error")
 	}
-	log.Println("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
-	return err
+
+	return nil
 }
 
 // PublishWithXdl 带有死信交换机的发送
 func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
-
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish")

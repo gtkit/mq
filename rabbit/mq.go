@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pkg/errors"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -162,12 +164,14 @@ func (mq *RabbitMQ) Ctx() context.Context {
 }
 
 // SetConfirm 设置监听消息发送
-func (mq *RabbitMQ) SetConfirm() {
+func (mq *RabbitMQ) SetConfirm() error {
 	err := mq.channel.Confirm(false)
 	if err != nil {
 		log.Println("this.Channel.Confirm  ", err)
+		return errors.WithMessage(err, "Channel.Confirm")
 	}
 	mq.notifyConfirm = mq.channel.NotifyPublish(make(chan amqp.Confirmation))
+	return nil
 }
 
 // ListenConfirm 确认消息成功发布到rabbitmq channel,即消息从生产者到 Broker
