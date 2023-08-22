@@ -1,20 +1,32 @@
 package rabbit
 
-import "log"
+import (
+	"log"
+)
 
-type Logger struct{}
+var _ Logger = (*Log)(nil)
+
+type Logger interface {
+	Info(args ...interface{})
+	Infof(template string, args ...interface{})
+	Fatalf(template string, args ...interface{})
+}
+
+type Log struct{}
 
 var logger = NewLogger()
 
-func (l *Logger) Info(args ...interface{}) {
+func (l *Log) Info(args ...interface{}) {
 	log.Println(args...)
 }
-
-func (l *Logger) Errorf(template string, args ...interface{}) {
-	log.Fatalf(template, args...)
-
+func (l *Log) Infof(template string, args ...interface{}) {
+	log.Printf(template, args...)
 }
 
-func NewLogger() *Logger {
-	return &Logger{}
+func (l *Log) Fatalf(template string, args ...interface{}) {
+	log.Fatalf(template, args...)
+}
+
+func NewLogger() Logger {
+	return &Log{}
 }

@@ -27,7 +27,7 @@ type RabbitMQSimple struct {
 func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple, err error) {
 	// 判断是否输入必要的信息
 	if queueName == "" || mqUrl == "" {
-		log.Printf("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", queueName, mqUrl)
+		logger.Infof("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", queueName, mqUrl)
 		return nil, errors.New("QueueName and mqUrl is required")
 	}
 	rabbitmq, err := newRabbitMQ("", queueName, "", mqUrl)
@@ -35,7 +35,9 @@ func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple,
 		return nil, err
 	}
 
-	rabbitmq.SetConfirm()
+	if err = rabbitmq.SetConfirm(); err != nil {
+		return nil, err
+	}
 
 	if err != nil {
 		return nil, err
@@ -67,7 +69,7 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 	)
 
 	if err != nil {
-		fmt.Println("--QueueDeclare error:", err)
+		logger.Info("--QueueDeclare error:", err)
 		return err
 	}
 	// confirmsCh := make(chan *amqp.DeferredConfirmation)
@@ -89,9 +91,9 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 			Body:         []byte(message),
 		})
 	if err != nil {
-		fmt.Println("--PublishWithContext error: ", err)
+		logger.Info("--PublishWithContext error: ", err)
 	}
-	log.Println("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
+	logger.Info("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
 	return err
 }
 
@@ -109,7 +111,7 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 	// 声明死信交换机
 	var dlxName = "dlx-" + r.QueueName
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		fmt.Println("--DlqConsume DlxDeclare err: ", err)
+		logger.Info("--DlqConsume DlxDeclare err: ", err)
 		return err
 	}
 	// 1.申请队列,如果队列不存在，则会自动创建，如果队列存在则跳过创建直接使用  这样的好处保障队列存在，消息能发送到队列当中
@@ -129,7 +131,7 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 	)
 
 	if err != nil {
-		fmt.Println("--QueueDeclare error:", err)
+		logger.Info("--QueueDeclare error:", err)
 		return err
 	}
 	// confirmsCh := make(chan *amqp.DeferredConfirmation)
@@ -151,14 +153,14 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 			Body:         []byte(message),
 		})
 	if err != nil {
-		fmt.Println("--PublishWithContext error: ", err)
+		logger.Info("--PublishWithContext error: ", err)
 	}
-	fmt.Println("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
+	logger.Info("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
 	return err
 }
 
 // PublishDelay 发送延迟队列
-func (r *RabbitMQSimple) PublishDelay(message string, delayTime string) (err error) {
+func (r *RabbitMQSimple) PublishDelay(message string, ttl string) (err error) {
 
 	select {
 	case <-r.ctx.Done():
@@ -171,7 +173,7 @@ func (r *RabbitMQSimple) PublishDelay(message string, delayTime string) (err err
 	var dlxName = r.QueueName + "-delay-Ex"
 	// 声明死信交换机
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		fmt.Println("--DlqConsume DlxDeclare err 1: ", err)
+		logger.Info("--DlqConsume DlxDeclare err 1: ", err)
 		return err
 	}
 
@@ -192,7 +194,7 @@ func (r *RabbitMQSimple) PublishDelay(message string, delayTime string) (err err
 	)
 
 	if err != nil {
-		fmt.Println("--QueueDeclare error:", err)
+		logger.Info("--QueueDeclare error:", err)
 		return err
 	}
 	// confirmsCh := make(chan *amqp.DeferredConfirmation)
@@ -212,12 +214,12 @@ func (r *RabbitMQSimple) PublishDelay(message string, delayTime string) (err err
 			ContentType:  "text/plain",
 			MessageId:    msgId,
 			Body:         []byte(message),
-			Expiration:   delayTime, // push 时 在消息本体上设置expiration超时时间，单位为毫秒级别 类型为 string
+			Expiration:   ttl, // push 时 在消息本体上设置expiration超时时间，单位为毫秒级别 类型为 string
 		})
 	if err != nil {
-		fmt.Println("--PublishWithContext error: ", err)
+		logger.Info("--PublishWithContext error: ", err)
 	}
-	fmt.Println("--------------Delay Publish ----------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
+	logger.Info("--------------Delay Publish ----------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
 	return err
 }
 
@@ -233,7 +235,7 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		nil,
 	)
 	if err != nil {
-		fmt.Println("--Consume QueueDeclare error: ", err)
+		logger.Info("--Consume QueueDeclare error: ", err)
 		return err
 	}
 
@@ -248,28 +250,28 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		nil,
 	)
 	if err != nil {
-		fmt.Println("--channel.Consume error: ", err)
+		logger.Info("--channel.Consume error: ", err)
 		return err
 	}
 	for msg := range deliveries {
-		fmt.Println("------------Simple Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		logger.Info("------------Simple Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
 		select {
 		case <-r.Ctx().Done():
-			fmt.Println("======ctx done==========")
+			logger.Info("======ctx done==========")
 			if err := msg.Reject(false); err != nil { // 如果要放入死信交换机， Reject 要为false 才行
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				fmt.Println("reject error: ", err)
+				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
-		// fmt.Println("-----messageId: ", msg.MessageId)
+		// logger.Info("-----messageId: ", msg.MessageId)
 
 		if err := handler(msg.Body); err != nil {
 			if err = msg.Reject(false); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				fmt.Println("-----------reject error: ", err, "----------")
+				logger.Info("-----------reject error: ", err, "----------")
 			}
 			// mq.DlqConsume(mq.QueueName, "dead-letter-queue-"+mq.QueueName, "", dlxDo)
 
@@ -278,7 +280,7 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 
 		// // 确认一条消息，false表示确认当前消息，true表示确认当前消息和之前所有未确认的消息
 		if err := msg.Ack(false); err != nil {
-			fmt.Println("message ack error:", err, " message id: ", msg.MessageId)
+			logger.Info("message ack error:", err, " message id: ", msg.MessageId)
 			continue
 		}
 
@@ -326,28 +328,28 @@ func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) 
 		nil,
 	)
 	if err != nil {
-		fmt.Println("--channel.Consume error: ", err)
+		logger.Info("--channel.Consume error: ", err)
 		return err
 	}
 	for msg := range deliveries {
-		fmt.Println("------------Simple Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		logger.Info("------------Simple Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
 		select {
 		case <-r.Ctx().Done():
-			fmt.Println("======ctx done==========")
+			logger.Info("======ctx done==========")
 			if err := msg.Reject(false); err != nil { // 如果要放入死信交换机， Reject 要为false 才行
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				fmt.Println("reject error: ", err)
+				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
-		// fmt.Println("-----messageId: ", msg.MessageId)
+		// logger.Info("-----messageId: ", msg.MessageId)
 
 		if err := handler(msg.Body); err != nil {
 			if err = msg.Reject(false); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				fmt.Println("-----------reject error: ", err, "----------")
+				logger.Info("-----------reject error: ", err, "----------")
 			}
 			// mq.DlqConsume(mq.QueueName, "dead-letter-queue-"+mq.QueueName, "", dlxDo)
 
@@ -356,7 +358,7 @@ func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) 
 
 		// // 确认一条消息，false表示确认当前消息，true表示确认当前消息和之前所有未确认的消息
 		if err := msg.Ack(false); err != nil {
-			fmt.Println("message ack error:", err, " message id: ", msg.MessageId)
+			logger.Info("message ack error:", err, " message id: ", msg.MessageId)
 			continue
 		}
 
@@ -379,43 +381,43 @@ func (r *RabbitMQSimple) XdlConsume(handler func([]byte) error) error {
 	dlqName := "dlq-" + r.QueueName
 	q, err := r.channel.QueueDeclare(dlqName, true, false, false, false, nil)
 	if err != nil {
-		fmt.Println("--DlqConsume QueueDeclare err: ", err)
+		logger.Info("--DlqConsume QueueDeclare err: ", err)
 		return err
 	}
 
 	// 绑定队列到 exchange 中
 	if err := r.channel.QueueBind(dlqName, "#", dlxName, false, nil); err != nil {
-		fmt.Println("--DlqConsume QueueBind err: ", err)
+		logger.Info("--DlqConsume QueueBind err: ", err)
 		return err
 	}
 
 	// 消费消息
 	deliveries, err := r.channel.Consume(q.Name, "", false, false, false, false, nil)
 	if err != nil {
-		fmt.Println("--DlqConsume channel.Consume err: ", err)
+		logger.Info("--DlqConsume channel.Consume err: ", err)
 		return err
 	}
 	for msg := range deliveries {
-		fmt.Println("------------DLX Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		logger.Info("------------DLX Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
 		select {
 		case <-r.Ctx().Done():
 			if err := msg.Reject(true); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				fmt.Println("reject error: ", err)
+				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
 		if err := handler(msg.Body); err != nil {
-			fmt.Println("--DlqConsume handler err: ", err)
+			logger.Info("--DlqConsume handler err: ", err)
 			if err = msg.Reject(true); err != nil {
-				fmt.Println("reject error: ", err)
+				logger.Info("reject error: ", err)
 			}
 			continue
 		}
 		if err := msg.Ack(true); err != nil {
-			fmt.Println("---消息确认失败：", err)
+			logger.Info("---消息确认失败：", err)
 			return err
 		}
 
@@ -442,38 +444,38 @@ func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
 
 	// 绑定队列到 exchange 中
 	if err := r.channel.QueueBind(dlxQueue, "#", dlxName, false, nil); err != nil {
-		fmt.Println("--DlqConsume QueueBind err: ", err)
+		logger.Info("--DlqConsume QueueBind err: ", err)
 		return err
 	}
 
 	// 消费消息
 	deliveries, err := r.channel.Consume(q.Name, "", false, false, false, false, nil)
 	if err != nil {
-		fmt.Println("--DlqConsume channel.Consume err: ", err)
+		logger.Info("--DlqConsume channel.Consume err: ", err)
 		return err
 	}
 	for msg := range deliveries {
 
-		fmt.Println("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		logger.Info("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
 		select {
 		case <-r.Ctx().Done():
 			if err := msg.Reject(true); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				fmt.Println("reject error: ", err)
+				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
 
 		}
 		if err := handler(msg.Body); err != nil {
-			fmt.Println("--DlqConsume handler err: ", err)
+			logger.Info("--DlqConsume handler err: ", err)
 			if err = msg.Reject(true); err != nil {
-				fmt.Println("reject error: ", err)
+				logger.Info("reject error: ", err)
 			}
 			continue
 		}
 		if err := msg.Ack(false); err != nil {
-			fmt.Println("---消息确认失败：", err)
+			logger.Info("---消息确认失败：", err)
 			return err
 		}
 
