@@ -45,7 +45,7 @@ func exampleDelay() {
 
 	// 消费者1
 	go func() {
-		err := rabbitmq2.ConsumeDelay("x-delay-queue-1", doExampleDelayMsg)
+		err := rabbitmq2.ConsumeDelay(doExampleDelayMsg)
 		if err != nil {
 			fmt.Println("----ConsumeDelay 1 error: ", err)
 			return
@@ -54,7 +54,7 @@ func exampleDelay() {
 
 	// 消费者2
 	go func() {
-		err := rabbitmq3.ConsumeDelay("x-delay-queue-2", doExampleDelayMsg2)
+		err := rabbitmq3.ConsumeDelay(doExampleDelayMsg2)
 		if err != nil {
 			fmt.Println("----ConsumeDelay 2 error: ", err)
 			return
@@ -65,12 +65,12 @@ func exampleDelay() {
 	<-forever
 }
 
-func doExampleDelayMsg(msg []byte, msgid string) error {
-	fmt.Println("-----doExampleDelayMsg doConsumeMsg: ", string(msg), " msgid: ", msgid)
+func doExampleDelayMsg(msg []byte) error {
+	fmt.Println("-----doExampleDelayMsg doConsumeMsg: ", string(msg))
 	return nil
 }
 
-func doExampleDelayMsg2(msg []byte, msgid string) error {
-	fmt.Println("-----doExampleDelayMsg 22 doConsumeMsg: ", string(msg), " msgid: ", msgid)
+func doExampleDelayMsg2(msg []byte) error {
+	fmt.Println("-----doExampleDelayMsg 22 doConsumeMsg: ", string(msg))
 	return nil
 }

@@ -195,7 +195,7 @@ func (r *RabbitMqSubscription) PublishDelay(message string, ttl string) error {
 }
 
 // ConsumeDelay 消费延迟队列
-func (r *RabbitMqSubscription) ConsumeDelay(queue string, handler func([]byte, string) error) error {
+func (r *RabbitMqSubscription) ConsumeDelay(handler func([]byte) error) error {
 	// 1 声明延迟交换机.
 	if err := r.channel.ExchangeDeclare(
 		r.ExchangeName,
@@ -211,14 +211,14 @@ func (r *RabbitMqSubscription) ConsumeDelay(queue string, handler func([]byte, s
 		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
 	}
 
-	// 2 声明延迟队列（用于与死信交换机绑定）.
-	q, err := r.channel.QueueDeclare(queue, true, false, false, false, nil)
+	// 2 声明延迟队列（用于与延迟交换机机绑定）.
+	q, err := r.channel.QueueDeclare("", true, false, false, false, nil)
 	if err != nil {
 		return errors.WithMessage(err, "--DlqConsume QueueDeclare err")
 	}
 
 	// 3 绑定队列到 exchange 中.
-	if err := r.channel.QueueBind(queue, "#", r.ExchangeName, false, nil); err != nil {
+	if err := r.channel.QueueBind(q.Name, "#", r.ExchangeName, false, nil); err != nil {
 		logger.Info("--DlqConsume QueueBind err: ", err)
 		return errors.WithMessage(err, "--DlqConsume QueueBind err")
 	}
@@ -230,7 +230,6 @@ func (r *RabbitMqSubscription) ConsumeDelay(queue string, handler func([]byte, s
 		return errors.WithMessage(err, "--DlqConsume channel.Consume err")
 	}
 	for msg := range deliveries {
-		// logger.Info("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
 		select {
 		case <-r.Ctx().Done():
 			if err := msg.Reject(true); err != nil {
@@ -240,69 +239,7 @@ func (r *RabbitMqSubscription) ConsumeDelay(queue string, handler func([]byte, s
 			return fmt.Errorf("context cancel Consume")
 		default:
 		}
-		if err := handler(msg.Body, msg.MessageId); err != nil {
-			logger.Info("--DlqConsume handler err: ", err)
-			if err = msg.Reject(true); err != nil {
-				logger.Info("reject error: ", err)
-			}
-			continue
-		}
-		if err := msg.Ack(false); err != nil {
-			logger.Info("---消息确认失败：", err)
-			return err
-		}
-
-	}
-	return nil
-
-}
-func (r *RabbitMqSubscription) ConsumeDelay2(handler func([]byte, string) error) error {
-	// 1 声明延迟交换机.
-	if err := r.channel.ExchangeDeclare(
-		r.ExchangeName,
-		"x-delayed-message", //
-		true,                // 持久化
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-delayed-type": "fanout",
-		},
-	); err != nil {
-		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
-	}
-
-	// 2 声明延迟队列（用于与死信交换机绑定）.
-	dlxQueue := r.ExchangeName + "-delay-queue2"
-	q, err := r.channel.QueueDeclare(dlxQueue, true, false, false, false, nil)
-	if err != nil {
-		return errors.WithMessage(err, "--DlqConsume QueueDeclare err")
-	}
-
-	// 3 绑定队列到 exchange 中.
-	if err := r.channel.QueueBind(dlxQueue, "#", r.ExchangeName, false, nil); err != nil {
-		logger.Info("--DlqConsume QueueBind err: ", err)
-		return errors.WithMessage(err, "--DlqConsume QueueBind err")
-	}
-
-	// 消费消息.
-	deliveries, err := r.channel.Consume(q.Name, "", false, false, false, false, nil)
-	if err != nil {
-		logger.Info("--DlqConsume channel.Consume err: ", err)
-		return errors.WithMessage(err, "--DlqConsume channel.Consume err")
-	}
-	for msg := range deliveries {
-		// logger.Info("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
-		select {
-		case <-r.Ctx().Done():
-			if err := msg.Reject(true); err != nil {
-				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				logger.Info("reject error: ", err)
-			}
-			return fmt.Errorf("context cancel Consume")
-		default:
-		}
-		if err := handler(msg.Body, msg.MessageId); err != nil {
+		if err := handler(msg.Body); err != nil {
 			logger.Info("--DlqConsume handler err: ", err)
 			if err = msg.Reject(true); err != nil {
 				logger.Info("reject error: ", err)
