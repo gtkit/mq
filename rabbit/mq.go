@@ -4,13 +4,10 @@ package rabbit
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
-
-	"github.com/pkg/errors"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -56,6 +53,14 @@ type RabbitMQ struct {
 type RabbitMQInterface interface {
 	Publish(message string) (err error)
 	Consume(handler func([]byte) error) (err error)
+
+	// PublishDelay 延迟队列
+	PublishDelay(message string, ttl string) error
+	ConsumeDelay(handler func([]byte) error) error
+
+	// ConsumeFailToDlx 消息消费失败进入死信队列
+	ConsumeFailToDlx(handler func([]byte) error) error
+	ConsumeDlx(handler func([]byte) error) error
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
@@ -72,7 +77,7 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 
 	// 创建rabbitmq连接
 	config := amqp.Config{
-		//Vhost:      "/",
+		// Vhost:      "/",
 		Properties: amqp.NewConnectionProperties(),
 		Heartbeat:  10 * time.Second,
 		Locale:     "en_US",
@@ -91,6 +96,12 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	if err != nil {
 		return nil, err
 	}
+
+	// 设置公平调度分发
+	err = mq.channel.Qos(1, 0, false)
+	if err != nil {
+		return nil, err
+	}
 	// auto reconnect channel
 	mq.NotifyChannelClose()
 
@@ -100,22 +111,21 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 	go func() {
 		for {
-			fmt.Println("---------mq.conn.NotifyClose---------")
 			reason, ok := <-mq.conn.NotifyClose(make(chan *amqp.Error))
 			if !ok {
-				log.Println("connection closed")
+				logger.Info("connection closed")
 				break
 			}
-			log.Printf("connection closed, reason: %v", reason)
+			logger.Infof("connection closed, reason: %v", reason)
 			for {
 				time.Sleep(delay * time.Second)
 				reconnect, err := amqp.DialConfig(mq.MqURL, config)
 				if err == nil {
 					mq.conn = reconnect
-					log.Println("reconnect success")
+					logger.Info("reconnect success")
 					break
 				}
-				log.Printf("reconnect failed, err: %v", err)
+				logger.Infof("reconnect failed, err: %v", err)
 			}
 
 		}
@@ -130,20 +140,20 @@ func (mq *RabbitMQ) NotifyChannelClose() {
 			reason, ok := <-mq.channel.NotifyClose(make(chan *amqp.Error))
 			// exit this goroutine if closed by developer
 			if !ok || mq.channel.IsClosed() {
-				log.Println("channel closed")
+				logger.Info("channel closed")
 				_ = mq.channel.Close() // close again, ensure closed flag set when connection closed
 				break
 			}
-			log.Printf("channel closed, reason: %v", reason)
+			logger.Infof("channel closed, reason: %v", reason)
 			for {
 				time.Sleep(delay * time.Second)
 				ch, err := mq.conn.Channel()
 				if err == nil {
-					log.Println("channel recreate success")
+					logger.Info("channel recreate success")
 					mq.channel = ch
 					break
 				}
-				log.Printf("channel recreate failed, err: %v", err)
+				logger.Infof("channel recreate failed, err: %v", err)
 			}
 		}
 	}()
@@ -152,7 +162,7 @@ func (mq *RabbitMQ) NotifyChannelClose() {
 
 // Destroy 断开channel和connection
 func (mq *RabbitMQ) Destroy() {
-	log.Printf("%s,%s is closed!!!", mq.ExchangeName, mq.QueueName)
+	logger.Infof("%s,%s is closed!!!", mq.ExchangeName, mq.QueueName)
 	mq.channel.Close()
 	mq.conn.Close()
 	mq.cancel()
@@ -167,8 +177,8 @@ func (mq *RabbitMQ) Ctx() context.Context {
 func (mq *RabbitMQ) SetConfirm() error {
 	err := mq.channel.Confirm(false)
 	if err != nil {
-		log.Println("this.Channel.Confirm  ", err)
-		return errors.WithMessage(err, "Channel.Confirm")
+		logger.Info("this.Channel.Confirm  ", err)
+		return err
 	}
 	mq.notifyConfirm = mq.channel.NotifyPublish(make(chan amqp.Confirmation))
 	return nil
@@ -179,10 +189,10 @@ func (mq *RabbitMQ) ListenConfirm() {
 	go func() {
 		for c := range mq.notifyConfirm {
 			if c.Ack {
-				log.Println("confirm:消息发送成功")
+				logger.Info("confirm:消息发送成功")
 			} else {
 				// 这里表示消息发送到mq失败,可以处理失败流程
-				log.Println("confirm:消息发送失败")
+				logger.Info("confirm:消息发送失败")
 			}
 		}
 	}()
@@ -198,7 +208,7 @@ func (mq *RabbitMQ) NotifyReturn() {
 			// _, ok := p.Headers["x-delay"]
 			// if string(p.Body) != "" && !ok {
 			if string(p.Body) != "" {
-				log.Println("消息没有正确入列:", string(p.Body), "; MessageId:", p.MessageId)
+				logger.Info("消息没有正确入列:", string(p.Body), "; MessageId:", p.MessageId)
 			}
 
 		}
@@ -212,7 +222,7 @@ func setupCloseHandler(exitCh chan struct{}) {
 	fmt.Println("---- signal.Notify begin----")
 	go func() {
 		<-c
-		log.Printf("close handler: Ctrl+C pressed in Terminal")
+		logger.Infof("close handler: Ctrl+C pressed in Terminal")
 		close(exitCh)
 	}()
 }

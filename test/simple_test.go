@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"mq/rabbit"
 	"strconv"
 	"testing"
 	"time"
+
+	"mq/rabbit"
 )
 
 func TestSimpleMq(t *testing.T) {
@@ -41,7 +42,7 @@ func example12() {
 
 	// simple 消费
 	go func() {
-		err := rabbitmq2.ConsumeWithXdl(doConsumeMsg)
+		err := rabbitmq2.ConsumeFailToDlx(doConsumeMsg)
 		if err != nil {
 			fmt.Println("----Consume error: ", err)
 			return
@@ -51,7 +52,7 @@ func example12() {
 
 	// 死信消费
 	go func() {
-		err := rabbitmq2.XdlConsume(dlxDo)
+		err := rabbitmq2.ConsumeDlx(dlxDo)
 		if err != nil {
 			fmt.Println("----DlqConsume error: ", err)
 			return
@@ -83,8 +84,8 @@ func example12Delay() {
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			time.Sleep(2 * time.Second)
-			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "4000")
+			time.Sleep(1 * time.Second)
+			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "2000")
 
 			if err != nil {
 				fmt.Println("pulish err: ", err)
