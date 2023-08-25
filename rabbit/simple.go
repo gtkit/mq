@@ -160,7 +160,7 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 }
 
 // PublishDelay 发送延迟队列
-func (r *RabbitMQSimple) PublishDelay(message string, ttl string) (err error) {
+func (r *RabbitMQSimple) PublishDelay(message string, ttl string) error {
 
 	select {
 	case <-r.ctx.Done():
@@ -178,7 +178,7 @@ func (r *RabbitMQSimple) PublishDelay(message string, ttl string) (err error) {
 	}
 
 	// 1.申请队列,如果队列不存在，则会自动创建，如果队列存在则跳过创建直接使用  这样的好处保障队列存在，消息能发送到队列当中
-	_, err = r.channel.QueueDeclare(
+	_, err := r.channel.QueueDeclare(
 		r.QueueName, // 队列名字
 		true,        // 进入的消息是否持久化 进入队列如果不消费那么消息就在队列里面 如果重启服务器那么这个消息就没啦 通常设置为false
 		false,       // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
@@ -221,6 +221,64 @@ func (r *RabbitMQSimple) PublishDelay(message string, ttl string) (err error) {
 	}
 	logger.Info("--------------Delay Publish ----------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
 	return err
+}
+
+// ConsumeDelay 消费延迟队列
+func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
+
+	// 1 声明死信交换机
+	dlxName := r.QueueName + "-delay-Ex"
+	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
+		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
+	}
+
+	// 声明 延迟死信队列（用于与死信交换机绑定）
+	dlxQueue := r.QueueName + "-delay"
+	q, err := r.channel.QueueDeclare(dlxQueue, true, false, false, false, nil)
+	if err != nil {
+		return errors.WithMessage(err, "--DlqConsume QueueDeclare err")
+	}
+
+	// 绑定队列到 exchange 中
+	if err := r.channel.QueueBind(dlxQueue, "#", dlxName, false, nil); err != nil {
+		logger.Info("--DlqConsume QueueBind err: ", err)
+		return err
+	}
+
+	// 消费消息
+	deliveries, err := r.channel.Consume(q.Name, "", false, false, false, false, nil)
+	if err != nil {
+		logger.Info("--DlqConsume channel.Consume err: ", err)
+		return err
+	}
+	for msg := range deliveries {
+
+		logger.Info("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		select {
+		case <-r.Ctx().Done():
+			if err := msg.Reject(true); err != nil {
+				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
+				logger.Info("reject error: ", err)
+			}
+			return fmt.Errorf("context cancel Consume")
+		default:
+
+		}
+		if err := handler(msg.Body); err != nil {
+			logger.Info("--DlqConsume handler err: ", err)
+			if err = msg.Reject(true); err != nil {
+				logger.Info("reject error: ", err)
+			}
+			continue
+		}
+		if err := msg.Ack(false); err != nil {
+			logger.Info("---消息确认失败：", err)
+			return err
+		}
+
+	}
+	return nil
+
 }
 
 // Consume 直接模式，消费者
@@ -289,8 +347,8 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 	return nil
 }
 
-// ConsumeWithXdl 带有死信交换机的消费
-func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) {
+// ConsumeFailToDlx 带有死信交换机的消费
+func (r *RabbitMQSimple) ConsumeFailToDlx(handler func([]byte) error) error {
 	// 1 声明死信交换机
 	var dlxName = "dlx-" + r.QueueName
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
@@ -367,8 +425,8 @@ func (r *RabbitMQSimple) ConsumeWithXdl(handler func([]byte) error) (err error) 
 	return nil
 }
 
-// XdlConsume 消费死信队列
-func (r *RabbitMQSimple) XdlConsume(handler func([]byte) error) error {
+// ConsumeDlx 消费死信队列
+func (r *RabbitMQSimple) ConsumeDlx(handler func([]byte) error) error {
 
 	// 死信交换机
 	dlxName := "dlx-" + r.QueueName
@@ -417,64 +475,6 @@ func (r *RabbitMQSimple) XdlConsume(handler func([]byte) error) error {
 			continue
 		}
 		if err := msg.Ack(true); err != nil {
-			logger.Info("---消息确认失败：", err)
-			return err
-		}
-
-	}
-	return nil
-
-}
-
-// ConsumeDelay 消费延迟队列
-func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
-
-	// 1 声明死信交换机
-	dlxName := r.QueueName + "-delay-Ex"
-	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
-	}
-
-	// 声明 延迟死信队列（用于与死信交换机绑定）
-	dlxQueue := r.QueueName + "-delay"
-	q, err := r.channel.QueueDeclare(dlxQueue, true, false, false, false, nil)
-	if err != nil {
-		return errors.WithMessage(err, "--DlqConsume QueueDeclare err")
-	}
-
-	// 绑定队列到 exchange 中
-	if err := r.channel.QueueBind(dlxQueue, "#", dlxName, false, nil); err != nil {
-		logger.Info("--DlqConsume QueueBind err: ", err)
-		return err
-	}
-
-	// 消费消息
-	deliveries, err := r.channel.Consume(q.Name, "", false, false, false, false, nil)
-	if err != nil {
-		logger.Info("--DlqConsume channel.Consume err: ", err)
-		return err
-	}
-	for msg := range deliveries {
-
-		logger.Info("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
-		select {
-		case <-r.Ctx().Done():
-			if err := msg.Reject(true); err != nil {
-				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-				logger.Info("reject error: ", err)
-			}
-			return fmt.Errorf("context cancel Consume")
-		default:
-
-		}
-		if err := handler(msg.Body); err != nil {
-			logger.Info("--DlqConsume handler err: ", err)
-			if err = msg.Reject(true); err != nil {
-				logger.Info("reject error: ", err)
-			}
-			continue
-		}
-		if err := msg.Ack(false); err != nil {
 			logger.Info("---消息确认失败：", err)
 			return err
 		}

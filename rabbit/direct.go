@@ -3,7 +3,6 @@ package rabbit
 
 import (
 	"errors"
-	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -11,28 +10,27 @@ import (
 /*
 4 Routing路由模式
 */
-type RabbitMqRouting struct {
+type RabbitMqDirect struct {
 	*RabbitMQ
 }
 
 // 获取路由模式下的rabbitmq的实例
-func NewRabbitMQRouting(exchangeName, routingKey, mqUrl string) (rabbitMqRouting *RabbitMqRouting, err error) {
+func NewRabbitMQRouting(exchangeName, routingKey, mqUrl string) (rabbitMqDirect *RabbitMqDirect, err error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || routingKey == "" || mqUrl == "" {
-		log.Fatalf("ExchangeName, routingKey and mqUrl is required,\nbut exchangeName, routingKey and mqUrl are %s, %s and %s.", exchangeName, routingKey, mqUrl)
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
 	}
 	rabbitmq, err := newRabbitMQ(exchangeName, "", routingKey, mqUrl)
 	if err != nil {
 		return nil, err
 	}
-	return &RabbitMqRouting{
+	return &RabbitMqDirect{
 		rabbitmq,
 	}, nil
 }
 
 // 路由模式发送信息
-func (r *RabbitMqRouting) Publish(message string) (err error) {
+func (r *RabbitMqDirect) Publish(message string) (err error) {
 	// 1 尝试创建交换机，不存在创建
 	err = r.channel.ExchangeDeclare(
 		// 交换机名称
@@ -66,7 +64,7 @@ func (r *RabbitMqRouting) Publish(message string) (err error) {
 			ContentType: "text/plain",
 			// 消息
 			Body: []byte(message),
-			//Expiration: r.MsgExpiration(),
+			// Expiration: r.MsgExpiration(),
 		})
 	if err != nil {
 		return err
@@ -76,7 +74,7 @@ func (r *RabbitMqRouting) Publish(message string) (err error) {
 }
 
 // 路由模式接收信息
-func (r *RabbitMqRouting) Consume() (consumeChan <-chan amqp.Delivery, err error) {
+func (r *RabbitMqDirect) Consume() (consumeChan <-chan amqp.Delivery, err error) {
 	// 1 尝试创建交换机，不存在创建
 	err = r.channel.ExchangeDeclare(
 		// 交换机名称

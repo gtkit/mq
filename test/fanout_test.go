@@ -18,18 +18,72 @@ func TestSubMq(t *testing.T) {
 	example3()
 }
 
-func example3() {
-	rabbitmq1, err1 := rabbit.NewRabbitMQSub("exchange.example3", MQURL)
+func TestFanoutDlx(t *testing.T) {
+	exampleFanoutDlx()
+}
+
+func exampleFanoutDlx() {
+	rabbitmq1, err1 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQSub("exchange.example3", MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewRabbitMQSub("exchange.example3", MQURL)
+	rabbitmq3, err3 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	defer rabbitmq3.Destroy()
+	if err3 != nil {
+		log.Println(err3)
+	}
+
+	go func() {
+		for i := 0; i < 10000; i++ {
+			time.Sleep(1 * time.Second)
+			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			if err != nil {
+				fmt.Println("----example3 Publish error:", err)
+				return
+			}
+		}
+	}()
+
+	// 消费者1
+	go func() {
+		err := rabbitmq2.ConsumeFailToDlx(doConsumeFailToDlx)
+		if err != nil {
+			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
+			return
+		}
+	}()
+
+	// 消费者2 死信消费
+	go func() {
+		err := rabbitmq3.ConsumeDlx(doConsumeDlx)
+		if err != nil {
+			fmt.Println("----ConsumeDlx Consume error: ", err)
+			return
+		}
+	}()
+
+	forever := make(chan bool)
+	<-forever
+}
+
+func example3() {
+	rabbitmq1, err1 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	defer rabbitmq1.Destroy()
+	if err1 != nil {
+		log.Println(err1)
+	}
+	rabbitmq2, err2 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	defer rabbitmq2.Destroy()
+	if err2 != nil {
+		log.Println(err2)
+	}
+	rabbitmq3, err3 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)
@@ -72,5 +126,16 @@ func doExample31Msg(msg []byte) error {
 }
 func doExample32Msg(msg []byte) error {
 	fmt.Println("-----Example3-2 doConsumeMsg: ", string(msg))
+	return nil
+}
+
+func doConsumeFailToDlx(msg []byte) error {
+	fmt.Println("-----doConsumeFailToDlx --Msg: ", string(msg))
+	return nil
+	// return errors.New("...doConsumeFailToDlx error for test...")
+}
+
+func doConsumeDlx(msg []byte) error {
+	fmt.Println(".....doConsumeDlx ....Msg: ", string(msg))
 	return nil
 }

@@ -53,6 +53,14 @@ type RabbitMQ struct {
 type RabbitMQInterface interface {
 	Publish(message string) (err error)
 	Consume(handler func([]byte) error) (err error)
+
+	// PublishDelay 延迟队列
+	PublishDelay(message string, ttl string) error
+	ConsumeDelay(handler func([]byte) error) error
+
+	// ConsumeFailToDlx 消息消费失败进入死信队列
+	ConsumeFailToDlx(handler func([]byte) error) error
+	ConsumeDlx(handler func([]byte) error) error
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
