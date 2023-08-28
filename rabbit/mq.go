@@ -80,7 +80,7 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 		// Vhost:      "/",
 		Properties: amqp.NewConnectionProperties(),
 		Heartbeat:  10 * time.Second,
-		Locale:     "en_US",
+		// Locale:     "en_US",
 	}
 	config.Properties.SetClientConnectionName("producer-with-confirms")
 
@@ -98,10 +98,10 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	}
 
 	// 设置公平调度分发
-	err = mq.channel.Qos(1, 0, false)
-	if err != nil {
+	if err = mq.channel.Qos(1, 0, false); err != nil {
 		return nil, err
 	}
+
 	// auto reconnect channel
 	mq.NotifyChannelClose()
 

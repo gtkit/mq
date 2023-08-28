@@ -62,7 +62,7 @@ func (r *RabbitMqFanout) Publish(message string) error {
 	return r.RabbitMQ.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName, // 交换机名称
-		"",             // 路由参数，fanout类型交换机，自动忽略路由参数
+		r.Key,          // 路由参数，fanout类型交换机，自动忽略路由参数
 		false,
 		false,
 		amqp.Publishing{
