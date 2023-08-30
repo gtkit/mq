@@ -15,12 +15,12 @@ type RabbitMqDirect struct {
 }
 
 // NewRabbitMQDirect 获取路由模式下的rabbitmq的实例.
-func NewRabbitMQDirect(exchangeName, routingKey, mqUrl string) (rabbitMqDirect *RabbitMqDirect, err error) {
+func NewRabbitMQDirect(exchangeName, queueName, routingKey, mqUrl string) (rabbitMqDirect *RabbitMqDirect, err error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || routingKey == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
 	}
-	rabbitmq, err := newRabbitMQ(exchangeName, "", routingKey, mqUrl)
+	rabbitmq, err := newRabbitMQ(exchangeName, queueName, routingKey, mqUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (r *RabbitMqDirect) Consume(handler func([]byte) error) error {
 
 	// 2 试探性创建队列
 	q, err := r.channel.QueueDeclare(
-		"", // 随机生产队列名称
+		r.QueueName, // 随机生产队列名称
 		true,
 		false,
 		true,
@@ -228,7 +228,7 @@ func (r *RabbitMqDirect) ConsumeDelay(handler func([]byte) error) error {
 	}
 
 	// 2 声明延迟队列（用于与延迟交换机机绑定）.
-	q, err := r.channel.QueueDeclare("", true, false, false, false, nil)
+	q, err := r.channel.QueueDeclare(r.QueueName, true, false, false, false, nil)
 	if err != nil {
 		return errors.WithMessage(err, "--DlqConsume QueueDeclare err")
 	}
@@ -352,7 +352,7 @@ func (r *RabbitMqDirect) ConsumeDlx(handler func([]byte) error) error {
 
 	// 2. 创建死信队列.
 	dlxq, err := r.channel.QueueDeclare(
-		r.ExchangeName+"-dlx", // 死信队列名字
+		r.QueueName+".queue.dlx", // 死信队列名字
 		true,
 		false,
 		false, // 队列解锁
@@ -367,8 +367,8 @@ func (r *RabbitMqDirect) ConsumeDlx(handler func([]byte) error) error {
 	// 3. 绑定死信队列到死信交换机中.
 	if err := r.channel.QueueBind(
 		dlxq.Name,
-		r.Key, // 死信队列路由, # 井号的意思就匹配所有路由参数，意思就是接收所有死信消息
-		r.ExchangeName+"-dlx",
+		r.Key+".dlx", // 死信队列路由, # 井号的意思就匹配所有路由参数，意思就是接收所有死信消息
+		r.ExchangeName+".dlx",
 		false,
 		nil,
 	); err != nil {
@@ -439,13 +439,14 @@ func (r *RabbitMqDirect) exchangeDeclare() error {
 }
 func (r *RabbitMqDirect) queueDeclare() error {
 	q, err := r.channel.QueueDeclare(
-		"", // 随机生产队列名称
+		r.QueueName, // 随机生产队列名称
 		true,
 		false,
-		true, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
+		false, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
 		false,
 		amqp.Table{
-			"x-dead-letter-exchange": r.ExchangeName + "-dlx", // 声明当前队列绑定的 死信交换机
+			"x-dead-letter-exchange":    r.ExchangeName + ".dlx", // 声明当前队列绑定的 死信交换机
+			"x-dead-letter-routing-key": r.Key + ".dlx",          // 死信路由
 		},
 	)
 	if err != nil {
@@ -469,7 +470,7 @@ func (r *RabbitMqDirect) queueBind() error {
 func (r *RabbitMqDirect) dlxExchangeDeclare() error {
 	// 死信交换机
 	return r.channel.ExchangeDeclare(
-		r.ExchangeName+"-dlx", // 死信交换机名字
+		r.ExchangeName+".dlx", // 死信交换机名字
 		"direct",              // 死信交换机类型
 		true,                  // 是否持久化
 		false,

@@ -29,35 +29,36 @@ func TestDirectDlx(t *testing.T) {
 
 func exampleDirectDlx() {
 	var (
-		routingKey = "key.direct.dlx"
-		exchange   = "exchange.direct.dlx"
+		routingKey = "key.direct"
+		exchange   = "exchange.direct"
+		queueName  = "queue.direct"
 	)
-	rabbitmq1, err1 := rabbit.NewRabbitMQDirect(exchange, routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewRabbitMQDirect(exchange, queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQDirect(exchange, routingKey, MQURL)
-	defer rabbitmq2.Destroy()
-	if err2 != nil {
-		log.Println(err2)
-	}
+	// rabbitmq2, err2 := rabbit.NewRabbitMQDirect(exchange, routingKey, MQURL)
+	// defer rabbitmq2.Destroy()
+	// if err2 != nil {
+	// 	log.Println(err2)
+	// }
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			msg := "消息：" + strconv.Itoa(i)
 			err := rabbitmq1.Publish(msg)
 			if err != nil {
-				fmt.Println("----example3 Publish error:", err)
+				fmt.Println("----direct.dlx Publish error:", err)
 				return
 			}
-			fmt.Println("----PublishDelay success: ", msg, " ----", time.Now().Format(time.DateTime))
+			fmt.Println("----Publish Dlx success: ", msg, " ----", time.Now().Format(time.DateTime))
 		}
 	}()
 
 	// 消费者1
 	go func() {
-		err := rabbitmq2.ConsumeFailToDlx(doConsumeDirectFailToDlx)
+		err := rabbitmq1.ConsumeFailToDlx(doConsumeDirectFailToDlx)
 		if err != nil {
 			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
@@ -67,7 +68,7 @@ func exampleDirectDlx() {
 
 	// 消费者2 死信消费
 	go func() {
-		err := rabbitmq2.ConsumeDlx(doConsumeDirectDlx)
+		err := rabbitmq1.ConsumeDlx(doConsumeDirectDlx)
 		if err != nil {
 			fmt.Println("----ConsumeDlx Consume error: ", err)
 			return
@@ -81,12 +82,12 @@ func exampleDirectDelay() {
 		routingKey = "key.direct.delay"
 		exchange   = "exchange.direct.delay"
 	)
-	rabbitmq1, err1 := rabbit.NewRabbitMQDirect(exchange, routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewRabbitMQDirect(exchange, "", routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQDirect(exchange, routingKey, MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQDirect(exchange, "", routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -119,12 +120,12 @@ func exampleDirectDelay() {
 
 func exampleDirect() {
 	var routingKey = "key.direct"
-	rabbitmq1, err1 := rabbit.NewRabbitMQDirect("exchange.direct", routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewRabbitMQDirect("exchange.direct", "", routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQDirect("exchange.direct", routingKey, MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQDirect("exchange.direct", "", routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
