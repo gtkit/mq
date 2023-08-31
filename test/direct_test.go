@@ -29,9 +29,10 @@ func TestDirectDlx(t *testing.T) {
 
 func exampleDirectDlx() {
 	var (
-		routingKey = "key.direct"
-		exchange   = "exchange.direct"
-		queueName  = "queue.direct"
+		routingKey = "key.direct.dlx"
+		exchange   = "exchange.direct.dlx"
+		// queueName  = "queue.direct"
+		queueName = ""
 	)
 	rabbitmq1, err1 := rabbit.NewRabbitMQDirect(exchange, queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
@@ -119,13 +120,17 @@ func exampleDirectDelay() {
 }
 
 func exampleDirect() {
-	var routingKey = "key.direct"
-	rabbitmq1, err1 := rabbit.NewRabbitMQDirect("exchange.direct", "", routingKey, MQURL)
+	var (
+		routingKey = "key.direct"
+		// queueName  = "queue.direct"
+		queueName = ""
+	)
+	rabbitmq1, err1 := rabbit.NewRabbitMQDirect("exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQDirect("exchange.direct", "", routingKey, MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQDirect("exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)

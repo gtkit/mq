@@ -108,10 +108,10 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 	return
 }
 
-func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
+func (r *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 	go func() {
 		for {
-			reason, ok := <-mq.conn.NotifyClose(make(chan *amqp.Error))
+			reason, ok := <-r.conn.NotifyClose(make(chan *amqp.Error))
 			if !ok {
 				logger.Info("connection closed")
 				break
@@ -119,9 +119,9 @@ func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 			logger.Infof("connection closed, reason: %v", reason)
 			for {
 				time.Sleep(delay * time.Second)
-				reconnect, err := amqp.DialConfig(mq.MqURL, config)
+				reconnect, err := amqp.DialConfig(r.MqURL, config)
 				if err == nil {
-					mq.conn = reconnect
+					r.conn = reconnect
 					logger.Info("reconnect success")
 					break
 				}
@@ -133,24 +133,24 @@ func (mq *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 }
 
 // NotifyChannelClose auto reconnect channel
-func (mq *RabbitMQ) NotifyChannelClose() {
+func (r *RabbitMQ) NotifyChannelClose() {
 	go func() {
 		for {
-			fmt.Println("---------mq.channel.NotifyClose---------")
-			reason, ok := <-mq.channel.NotifyClose(make(chan *amqp.Error))
+			fmt.Println("---------r.channel.NotifyClose---------")
+			reason, ok := <-r.channel.NotifyClose(make(chan *amqp.Error))
 			// exit this goroutine if closed by developer
-			if !ok || mq.channel.IsClosed() {
+			if !ok || r.channel.IsClosed() {
 				logger.Info("channel closed")
-				_ = mq.channel.Close() // close again, ensure closed flag set when connection closed
+				_ = r.channel.Close() // close again, ensure closed flag set when connection closed
 				break
 			}
 			logger.Infof("channel closed, reason: %v", reason)
 			for {
 				time.Sleep(delay * time.Second)
-				ch, err := mq.conn.Channel()
+				ch, err := r.conn.Channel()
 				if err == nil {
 					logger.Info("channel recreate success")
-					mq.channel = ch
+					r.channel = ch
 					break
 				}
 				logger.Infof("channel recreate failed, err: %v", err)
@@ -161,33 +161,33 @@ func (mq *RabbitMQ) NotifyChannelClose() {
 }
 
 // Destroy 断开channel和connection
-func (mq *RabbitMQ) Destroy() {
-	logger.Infof("%s,%s is closed!!!", mq.ExchangeName, mq.QueueName)
-	mq.channel.Close()
-	mq.conn.Close()
-	mq.cancel()
+func (r *RabbitMQ) Destroy() {
+	logger.Infof("%s,%s is closed!!!", r.ExchangeName, r.QueueName)
+	r.channel.Close()
+	r.conn.Close()
+	r.cancel()
 
 }
 
-func (mq *RabbitMQ) Ctx() context.Context {
-	return mq.ctx
+func (r *RabbitMQ) Ctx() context.Context {
+	return r.ctx
 }
 
 // SetConfirm 设置监听消息发送
-func (mq *RabbitMQ) SetConfirm() error {
-	err := mq.channel.Confirm(false)
+func (r *RabbitMQ) SetConfirm() error {
+	err := r.channel.Confirm(false)
 	if err != nil {
 		logger.Info("this.Channel.Confirm  ", err)
 		return err
 	}
-	mq.notifyConfirm = mq.channel.NotifyPublish(make(chan amqp.Confirmation))
+	r.notifyConfirm = r.channel.NotifyPublish(make(chan amqp.Confirmation))
 	return nil
 }
 
 // ListenConfirm 确认消息成功发布到rabbitmq channel,即消息从生产者到 Broker
-func (mq *RabbitMQ) ListenConfirm() {
+func (r *RabbitMQ) ListenConfirm() {
 	go func() {
-		for c := range mq.notifyConfirm {
+		for c := range r.notifyConfirm {
 			if c.Ack {
 				logger.Info("confirm:消息发送成功")
 			} else {
@@ -199,11 +199,11 @@ func (mq *RabbitMQ) ListenConfirm() {
 }
 
 // NotifyReturn  确保消息从交换机到队列入列成功
-func (mq *RabbitMQ) NotifyReturn() {
+func (r *RabbitMQ) NotifyReturn() {
 	// 前提需要设定Publish的mandatory为true
 	go func() {
 		// 消息是否正确入列
-		for p := range mq.channel.NotifyReturn(make(chan amqp.Return)) {
+		for p := range r.channel.NotifyReturn(make(chan amqp.Return)) {
 			// 这里是OK使用延迟交换机， 如果没有使用延迟交换机去掉_, ok :=ret.Headers["x-delay"] 和 if中的ok
 			// _, ok := p.Headers["x-delay"]
 			// if string(p.Body) != "" && !ok {
@@ -214,6 +214,36 @@ func (mq *RabbitMQ) NotifyReturn() {
 		}
 	}()
 
+}
+
+func (r *RabbitMQ) queueDeclare() error {
+	q, err := r.channel.QueueDeclare(
+		r.QueueName, // 如果为空,则随机生产队列名称
+		true,
+		false,
+		true, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	if r.QueueName == "" {
+		r.QueueName = q.Name
+	}
+
+	return nil
+}
+
+// queueBind 绑定队列和交换机
+func (r *RabbitMQ) queueBind() error {
+	return r.channel.QueueBind(
+		r.QueueName, // 队列名称
+		r.Key,       // 在pub/sub模式下key要为空
+		r.ExchangeName,
+		false,
+		nil,
+	)
 }
 
 func setupCloseHandler(exitCh chan struct{}) {
