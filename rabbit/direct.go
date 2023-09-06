@@ -9,13 +9,13 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// RabbitMqDirect Routing路由模式
-type RabbitMqDirect struct {
+// MqDirect Routing路由模式
+type MqDirect struct {
 	*RabbitMQ
 }
 
-// NewRabbitMQDirect 获取路由模式下的rabbitmq的实例.
-func NewRabbitMQDirect(exchangeName, queueName, routingKey, mqUrl string) (rabbitMqDirect *RabbitMqDirect, err error) {
+// NewMQDirect 获取路由模式下的rabbitmq的实例.
+func NewMQDirect(exchangeName, queueName, routingKey, mqUrl string) (*MqDirect, error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || routingKey == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
@@ -24,13 +24,13 @@ func NewRabbitMQDirect(exchangeName, queueName, routingKey, mqUrl string) (rabbi
 	if err != nil {
 		return nil, err
 	}
-	return &RabbitMqDirect{
+	return &MqDirect{
 		rabbitmq,
 	}, nil
 }
 
 // Publish 路由模式发送信息.
-func (r *RabbitMqDirect) Publish(message string) (err error) {
+func (r *MqDirect) Publish(message string) (err error) {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
@@ -64,7 +64,7 @@ func (r *RabbitMqDirect) Publish(message string) (err error) {
 }
 
 // Consume 路由模式接收信息
-func (r *RabbitMqDirect) Consume(handler func([]byte) error) error {
+func (r *MqDirect) Consume(handler func([]byte) error) error {
 	// 1 尝试创建交换机，不存在创建
 	if err := r.exchangeDeclare(); err != nil {
 		return err
@@ -131,7 +131,7 @@ func (r *RabbitMqDirect) Consume(handler func([]byte) error) error {
 }
 
 // PublishDelay 发布延迟队列.
-func (r *RabbitMqDirect) PublishDelay(message string, ttl string) error {
+func (r *MqDirect) PublishDelay(message string, ttl string) error {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
@@ -167,7 +167,7 @@ func (r *RabbitMqDirect) PublishDelay(message string, ttl string) error {
 }
 
 // ConsumeDelay 消费延迟队列
-func (r *RabbitMqDirect) ConsumeDelay(handler func([]byte) error) error {
+func (r *MqDirect) ConsumeDelay(handler func([]byte) error) error {
 	// 1 声明延迟交换机.
 	if err := r.delayExchange(); err != nil {
 		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
@@ -218,7 +218,7 @@ func (r *RabbitMqDirect) ConsumeDelay(handler func([]byte) error) error {
 }
 
 // ConsumeFailToDlx 消费失败后投递到死信交换机
-func (r *RabbitMqDirect) ConsumeFailToDlx(handler func([]byte) error) error {
+func (r *MqDirect) ConsumeFailToDlx(handler func([]byte) error) error {
 	// 1 创建交换机exchange
 	if err := r.exchangeDeclare(); err != nil {
 		logger.Info("Consume exchangeDeclare error: ", err)
@@ -288,27 +288,27 @@ func (r *RabbitMqDirect) ConsumeFailToDlx(handler func([]byte) error) error {
 }
 
 // ConsumeDlx 死信消费
-func (r *RabbitMqDirect) ConsumeDlx(handler func([]byte) error) error {
+func (r *MqDirect) ConsumeDlx(handler func([]byte) error) error {
 	// 1. 创建死信交换机.
 	if err := r.dlxExchange(); err != nil {
 		logger.Info("Consume dlxExchangeDeclare error: ", err)
 		return err
 	}
 
-	// 2. 创建死信队列.
+	// 2. 创建死信队列, 就是个普通队列.
 	dlxq, err := r.channel.QueueDeclare(
 		"", // 死信队列名字
 		true,
 		false,
-		false, // 队列解锁
+		true, // 队列解锁
 		false,
 		nil,
 	)
+	logger.Info("--dlxq queue name: ", dlxq.Name)
 	if err != nil {
 		logger.Info("Consume dlxQueueDeclare error: ", err)
 		return err
 	}
-	logger.Info("---dlx queue name: ", dlxq.Name)
 
 	// 3. 绑定死信队列到死信交换机中.
 	if err := r.channel.QueueBind(
@@ -372,7 +372,7 @@ func (r *RabbitMqDirect) ConsumeDlx(handler func([]byte) error) error {
 	return nil
 }
 
-func (r *RabbitMqDirect) exchangeDeclare() error {
+func (r *MqDirect) exchangeDeclare() error {
 	return r.channel.ExchangeDeclare(
 		// 交换机名称
 		r.ExchangeName,
@@ -390,12 +390,12 @@ func (r *RabbitMqDirect) exchangeDeclare() error {
 	)
 }
 
-func (r *RabbitMqDirect) queueDeclareWithDlx() error {
+func (r *MqDirect) queueDeclareWithDlx() error {
 	q, err := r.channel.QueueDeclare(
 		r.QueueName, // 随机生产队列名称
 		true,
 		false,
-		false, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
+		true, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
 		false,
 		amqp.Table{
 			"x-dead-letter-exchange":    r.ExchangeName + ".dlx", // 声明当前队列绑定的 死信交换机
@@ -411,7 +411,7 @@ func (r *RabbitMqDirect) queueDeclareWithDlx() error {
 }
 
 // dlxExchange 声明死信交换机.
-func (r *RabbitMqDirect) dlxExchange() error {
+func (r *MqDirect) dlxExchange() error {
 	// 死信交换机
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName+".dlx", // 死信交换机名字
@@ -425,7 +425,7 @@ func (r *RabbitMqDirect) dlxExchange() error {
 }
 
 // delayExchange 延迟交换机.
-func (r *RabbitMqDirect) delayExchange() error {
+func (r *MqDirect) delayExchange() error {
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName,
 		"x-delayed-message", // 交换机类型,延迟消息类型
