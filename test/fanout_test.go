@@ -23,17 +23,17 @@ func TestFanoutDlx(t *testing.T) {
 }
 
 func exampleFanoutDlx() {
-	rabbitmq1, err1 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	rabbitmq1, err1 := rabbit.NewMQFanout("exchange.example3", MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	rabbitmq2, err2 := rabbit.NewMQFanout("exchange.example3", MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	rabbitmq3, err3 := rabbit.NewMQFanout("exchange.example3", MQURL)
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)
@@ -73,17 +73,17 @@ func exampleFanoutDlx() {
 }
 
 func example3() {
-	rabbitmq1, err1 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	rabbitmq1, err1 := rabbit.NewMQFanout("exchange.example3", MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	rabbitmq2, err2 := rabbit.NewMQFanout("exchange.example3", MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewRabbitMQFanout("exchange.example3", MQURL)
+	rabbitmq3, err3 := rabbit.NewMQFanout("exchange.example3", MQURL)
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)

@@ -1,4 +1,4 @@
-// @Author xiaozhaofu 2023/7/6 20:27:00
+// Package rabbit @Author 2023/7/6 20:27:00
 package rabbit
 
 import (
@@ -65,7 +65,7 @@ type RabbitMQInterface interface {
 
 // NewRabbitMQ 创建一个RabbitMQ实例
 func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	mq = &RabbitMQ{
 		QueueName:    queueName,
 		ExchangeName: exchangeName,
@@ -77,12 +77,12 @@ func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err 
 
 	// 创建rabbitmq连接
 	config := amqp.Config{
-		// Vhost:      "/",
+		Vhost:      "/",
 		Properties: amqp.NewConnectionProperties(),
 		Heartbeat:  10 * time.Second,
-		// Locale:     "en_US",
+		Locale:     "en_US",
 	}
-	config.Properties.SetClientConnectionName("producer-with-confirms")
+	config.Properties.SetClientConnectionName("rabbit-with-" + exchangeName + "-" + queueName)
 
 	mq.conn, err = amqp.DialConfig(mq.MqURL, config)
 	if err != nil {

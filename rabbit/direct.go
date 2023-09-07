@@ -1,4 +1,3 @@
-// @Author xiaozhaofu 2023/7/18 19:55:00
 package rabbit
 
 import (
@@ -33,6 +32,7 @@ func NewMQDirect(exchangeName, queueName, routingKey, mqUrl string) (*MqDirect, 
 func (r *MqDirect) Publish(message string) (err error) {
 	select {
 	case <-r.ctx.Done():
+		r.Destroy()
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
 	default:
 	}
@@ -102,10 +102,8 @@ func (r *MqDirect) Consume(handler func([]byte) error) error {
 			if err := msg.Reject(true); err != nil {
 				logger.Info("ack error: ", err)
 			}
-
 			return errors.New("context cancel Consume")
 		default:
-
 		}
 
 		// 处理消息
@@ -126,7 +124,6 @@ func (r *MqDirect) Consume(handler func([]byte) error) error {
 		}
 
 	}
-
 	return nil
 }
 
@@ -134,6 +131,7 @@ func (r *MqDirect) Consume(handler func([]byte) error) error {
 func (r *MqDirect) PublishDelay(message string, ttl string) error {
 	select {
 	case <-r.ctx.Done():
+		r.Destroy()
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
 	default:
 	}

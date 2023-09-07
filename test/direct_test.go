@@ -155,12 +155,23 @@ func exampleDirect() {
 			return
 		}
 	}()
+	go func() {
+		err := rabbitmq2.Consume(doConsumeDirect2)
+		if err != nil {
+			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
+			return
+		}
+	}()
 
 	select {}
 }
 
 func doConsumeDirect(msg []byte) error {
 	fmt.Println(".....doConsume Direct ....Msg: ", string(msg))
+	return nil
+}
+func doConsumeDirect2(msg []byte) error {
+	fmt.Println(".....doConsume Direct ....Msg 2: ", string(msg))
 	return nil
 }
 

@@ -1,4 +1,4 @@
-// @Author xiaozhaofu 2023/7/6 20:59:00
+// @Author 2023/7/6 20:59:00
 package rabbit
 
 import (

@@ -16,17 +16,17 @@ func TestDealySubMq(t *testing.T) {
 }
 
 func exampleDelay() {
-	rabbitmq1, err1 := rabbit.NewRabbitMQFanout("exchange.delay", MQURL)
+	rabbitmq1, err1 := rabbit.NewMQFanout("exchange.delay", MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQFanout("exchange.delay", MQURL)
+	rabbitmq2, err2 := rabbit.NewMQFanout("exchange.delay", MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewRabbitMQFanout("exchange.delay", MQURL)
+	rabbitmq3, err3 := rabbit.NewMQFanout("exchange.delay", MQURL)
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)

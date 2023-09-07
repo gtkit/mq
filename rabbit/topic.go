@@ -1,4 +1,4 @@
-// @Author xiaozhaofu 2023/7/18 19:56:00
+// @Author 2023/7/18 19:56:00
 package rabbit
 
 import (
@@ -31,7 +31,7 @@ func NewMQTopic(exchangeName, routingKey, mqUrl string) (rabbitMQTopic *MqTopic,
 }
 
 // Publish topic模式。生产者。
-func (r *MqTopic) Publish(message string) (err error) {
+func (r *MqTopic) Publish(message string) error {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
@@ -42,7 +42,7 @@ func (r *MqTopic) Publish(message string) (err error) {
 	r.ListenConfirm()
 
 	// 1 尝试创建交换机,这里的kind的类型要改为topic
-	if err = r.exchangeDeclare(); err != nil {
+	if err := r.exchangeDeclare(); err != nil {
 		return err
 	}
 
