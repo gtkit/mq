@@ -29,7 +29,7 @@ https://blog.csdn.net/qq_28710983/article/details/105129432#:~:text=%E7%A1%AE%E8
 */
 
 // todo：设置重试的次数
-const delay = 3 // reconnect after delay seconds
+const Delay = 1 // reconnect after delay seconds
 // RabbitMQ RabbitMQ实例
 type RabbitMQ struct {
 	conn         *amqp.Connection // 连接
@@ -65,7 +65,7 @@ type RabbitMQInterface interface {
 
 // NewRabbitMQ 创建一个RabbitMQ实例
 func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	mq = &RabbitMQ{
 		QueueName:    queueName,
 		ExchangeName: exchangeName,
@@ -118,13 +118,15 @@ func (r *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 			}
 			logger.Infof("connection closed, reason: %v", reason)
 			for {
-				time.Sleep(delay * time.Second)
+				time.Sleep(Delay * time.Second)
 				reconnect, err := amqp.DialConfig(r.MqURL, config)
 				if err == nil {
 					r.conn = reconnect
+					r.channel, _ = r.conn.Channel()
 					logger.Info("reconnect success")
 					break
 				}
+
 				logger.Infof("reconnect failed, err: %v", err)
 			}
 
@@ -136,24 +138,24 @@ func (r *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 func (r *RabbitMQ) NotifyChannelClose() {
 	go func() {
 		for {
-			fmt.Println("---------r.channel.NotifyClose---------")
+			logger.Info("---------r.channel.NotifyClose---------")
 			reason, ok := <-r.channel.NotifyClose(make(chan *amqp.Error))
 			// exit this goroutine if closed by developer
 			if !ok || r.channel.IsClosed() {
-				logger.Info("channel closed")
+				logger.Info("--channel closed")
 				_ = r.channel.Close() // close again, ensure closed flag set when connection closed
 				break
 			}
-			logger.Infof("channel closed, reason: %v", reason)
+			logger.Infof("--channel closed, reason: %v", reason)
 			for {
-				time.Sleep(delay * time.Second)
+				time.Sleep(Delay * time.Second)
 				ch, err := r.conn.Channel()
 				if err == nil {
-					logger.Info("channel recreate success")
+					logger.Info("--channel recreate success")
 					r.channel = ch
 					break
 				}
-				logger.Infof("channel recreate failed, err: %v", err)
+				logger.Infof("--channel recreate failed, err: %v", err)
 			}
 		}
 	}()
@@ -189,10 +191,10 @@ func (r *RabbitMQ) ListenConfirm() {
 	go func() {
 		for c := range r.notifyConfirm {
 			if c.Ack {
-				logger.Info("confirm:消息发送成功")
+				fmt.Println("confirm:消息发送成功")
 			} else {
 				// 这里表示消息发送到mq失败,可以处理失败流程
-				logger.Info("confirm:消息发送失败")
+				fmt.Println("confirm:消息发送失败")
 			}
 		}
 	}()
@@ -221,7 +223,7 @@ func (r *RabbitMQ) queueDeclare() error {
 		r.QueueName, // 如果为空,则随机生产队列名称
 		true,
 		false,
-		true, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
+		false, // true 表示这个queue只能被当前连接访问，当连接断开时queue会被删除
 		false,
 		nil,
 	)

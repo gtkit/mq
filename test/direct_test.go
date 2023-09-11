@@ -124,44 +124,56 @@ func exampleDirect() {
 	var (
 		routingKey = "key.direct"
 		// queueName  = "queue.direct"
-		queueName = ""
+		queueName = "my-queue"
 	)
 	rabbitmq1, err1 := rabbit.NewMQDirect("exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
-		log.Println(err1)
+		log.Println("rabbitmq1-----", err1)
 	}
 	rabbitmq2, err2 := rabbit.NewMQDirect("exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
-		log.Println(err2)
+		log.Println("rabbitmq2----", err2)
 	}
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 			if err != nil {
-				fmt.Println("----example3 Publish error:", err)
-				return
+				fmt.Println("-----------------example Publish error:", err)
+				time.Sleep(3 * time.Second)
+				// return
+				fmt.Println("******** do Publish Direct Msg failed: ", "消息："+strconv.Itoa(i))
 			}
+			if err == nil {
+				fmt.Println("======= do Publish Direct Msg: ", "消息："+strconv.Itoa(i))
+			}
+
 		}
 	}()
 	//
 	// 消费者1
 	go func() {
-		err := rabbitmq2.Consume(doConsumeDirect)
-		if err != nil {
-			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
-			return
+		for i := 0; i < 5; i++ {
+			err := rabbitmq2.Consume(doConsumeDirect)
+			if err != nil {
+				fmt.Println("----ConsumeFailToDlx Consume error 1: ", err)
+				// return
+			}
+			time.Sleep(2 * time.Second)
+			fmt.Println("consume----", i)
 		}
 	}()
-	go func() {
-		err := rabbitmq2.Consume(doConsumeDirect2)
-		if err != nil {
-			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
-			return
-		}
-	}()
+	// go func() {
+	// 	err := rabbitmq2.Consume(doConsumeDirect2)
+	// 	if err != nil {
+	// 		fmt.Println("----ConsumeFailToDlx Consume error 2: ", err)
+	// 		// return
+	// 		time.Sleep(5 * time.Second)
+	// 		rabbitmq2.Consume(doConsumeDirect2)
+	// 	}
+	// }()
 
 	select {}
 }

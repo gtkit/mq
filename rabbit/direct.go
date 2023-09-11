@@ -67,17 +67,17 @@ func (r *MqDirect) Publish(message string) (err error) {
 func (r *MqDirect) Consume(handler func([]byte) error) error {
 	// 1 尝试创建交换机，不存在创建
 	if err := r.exchangeDeclare(); err != nil {
-		return err
+		return errors.WithMessage(err, "---exchangeDeclare---")
 	}
 
 	// 2 试探性创建队列
 	if err := r.queueDeclare(); err != nil {
-		return err
+		return errors.WithMessage(err, "----queueDeclare----")
 	}
 
 	// 3 绑定队列到exchange中
 	if err := r.queueBind(); err != nil {
-		return err
+		return errors.WithMessage(err, "---queueBind---")
 	}
 
 	// 4 消费消息
@@ -91,10 +91,16 @@ func (r *MqDirect) Consume(handler func([]byte) error) error {
 		nil,
 	)
 	if err != nil {
-		return err
+		logger.Info("----- r.channel.Consume error: ", err)
+		return errors.WithMessage(err, "----- r.channel.Consume error:")
 	}
 
 	for msg := range deliveries {
+		fmt.Println("--------------------读取到信息----", string(msg.Body))
+		if msg.Body == nil {
+			logger.Info("----读取不到信息----")
+			return errors.New("----读取不到信息----")
+		}
 		select {
 		case <-r.Ctx().Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
