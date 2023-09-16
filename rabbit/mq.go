@@ -123,11 +123,11 @@ func (r *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
 				if err == nil {
 					r.conn = reconnect
 					r.channel, _ = r.conn.Channel()
-					logger.Info("reconnect success")
+					logger.Info("connection reconnect success")
 					break
 				}
 
-				logger.Infof("reconnect failed, err: %v", err)
+				logger.Infof("connection reconnect failed, err: %v", err)
 			}
 
 		}
@@ -142,9 +142,9 @@ func (r *RabbitMQ) NotifyChannelClose() {
 			reason, ok := <-r.channel.NotifyClose(make(chan *amqp.Error))
 			// exit this goroutine if closed by developer
 			if !ok || r.channel.IsClosed() {
-				logger.Info("--channel closed")
+				logger.Info("--channel has closed")
 				_ = r.channel.Close() // close again, ensure closed flag set when connection closed
-				break
+				// break
 			}
 			logger.Infof("--channel closed, reason: %v", reason)
 			for {
@@ -154,8 +154,10 @@ func (r *RabbitMQ) NotifyChannelClose() {
 					logger.Info("--channel recreate success")
 					r.channel = ch
 					break
+				} else {
+					logger.Infof("--channel recreate failed, err: %v", err)
 				}
-				logger.Infof("--channel recreate failed, err: %v", err)
+
 			}
 		}
 	}()
@@ -243,6 +245,76 @@ func (r *RabbitMQ) queueBind() error {
 		r.QueueName, // 队列名称
 		r.Key,       // 在pub/sub模式下key要为空
 		r.ExchangeName,
+		false,
+		nil,
+	)
+}
+
+func (r *RabbitMQ) RetryMsg(msg amqp.Delivery, ttl string) error {
+	select {
+	case <-r.ctx.Done():
+		return fmt.Errorf("context cancel publish")
+	default:
+	}
+	// 确认消息监听函数， 启动一个协程，监听消息发送情况
+	r.ListenConfirm()
+
+	// 声明死信交换机
+	dlxName := r.QueueName + "-retry-Ex"
+	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
+		logger.Info("--DlqConsume DlxDeclare err 1: ", err)
+		return err
+	}
+
+	// 绑定主队列到 exchange 中
+	if err := r.channel.QueueBind(r.QueueName, "#", dlxName, false, nil); err != nil {
+		logger.Info("--DlqConsume QueueBind err: ", err)
+		return err
+	}
+
+	// 声明重试队列
+	retryQueue := r.QueueName + "-retry"
+	if _, err := r.channel.QueueDeclare(
+		retryQueue,
+		true,
+		false,
+		false,
+		false,
+		amqp.Table{
+			"x-dead-letter-exchange": dlxName, // 死信交换机
+		},
+	); err != nil {
+		fmt.Println("---retry queue err: ", err)
+	}
+	return r.channel.PublishWithContext(
+		r.ctx,
+		r.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
+		retryQueue,     // 路由参数， 这里使用队列的名字作为路由参数
+		false,          // 如果为true 会根据exchange类型和routkey规则，如果无法找到符合条件的队列那么会把发送的消息返还给发送者
+		false,          // 如果为true,当exchange发送消息到队列后发现队列上没有绑定消费者则会把消息返还给发送者
+		amqp.Publishing{
+			// 消息内容持久化，这个很关键
+			DeliveryMode: amqp.Persistent,
+			ContentType:  msg.ContentType,
+			Body:         msg.Body,
+			Headers:      msg.Headers,
+			Timestamp:    time.Now(),
+			Expiration:   ttl,
+		})
+
+}
+
+// DlxDeclare 声明死信交换机
+// dlxExchange 死信交换机名称
+// routingKind 死信交换机类型
+func (r *RabbitMQ) DlxDeclare(dlxExchange, routingKind string) error {
+	// 死信交换机
+	return r.channel.ExchangeDeclare(
+		dlxExchange, // 死信交换机名字
+		routingKind, // 死信交换机类型
+		true,        // 是否持久化
+		false,
+		false,
 		false,
 		nil,
 	)

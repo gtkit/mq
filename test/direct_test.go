@@ -122,9 +122,9 @@ func exampleDirectDelay() {
 
 func exampleDirect() {
 	var (
-		routingKey = "key.direct"
-		// queueName  = "queue.direct"
-		queueName = "my-queue"
+		routingKey = "my_direct_routingKey"
+		queueName  = "my_direct_queue"
+		// queueName = ""
 	)
 	rabbitmq1, err1 := rabbit.NewMQDirect("exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
@@ -155,13 +155,19 @@ func exampleDirect() {
 	//
 	// 消费者1
 	go func() {
-		for i := 0; i < 5; i++ {
+		i := 0
+		for {
 			err := rabbitmq2.Consume(doConsumeDirect)
 			if err != nil {
 				fmt.Println("----ConsumeFailToDlx Consume error 1: ", err)
 				// return
 			}
 			time.Sleep(2 * time.Second)
+			i++
+			if i > 10 {
+				// 发送飞书报警
+				break
+			}
 			fmt.Println("consume----", i)
 		}
 	}()
