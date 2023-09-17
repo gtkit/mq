@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log"
 
-	"github.com/gtkit/logger"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -64,7 +63,7 @@ func NewRabbitMQ(exchangeName, queueName, key, mqUrl string) (rabbitmq *RabbitMQ
 func (r *RabbitMQ) Destroy() {
 	r.channel.Close()
 	r.conn.Close()
-	logger.Infof("%s,%s is closed!!!", r.ExchangeName, r.QueueName)
+	// logger.Infof("%s,%s is closed!!!", r.ExchangeName, r.QueueName)
 }
 
 /*

@@ -1,4 +1,3 @@
-// @Author xiaozhaofu 2023/7/18 19:53:00
 package rabbit
 
 import (
@@ -15,14 +14,14 @@ import (
 */
 
 // RabbitMQInterface 定义rabbitmq的接口
-var _ RabbitMQInterface = (*RabbitMqFanout)(nil)
+var _ RabbitMQInterface = (*MqFanout)(nil)
 
-type RabbitMqFanout struct {
+type MqFanout struct {
 	*RabbitMQ
 }
 
 // NewRabbitMQFanout 获取订阅模式下的rabbitmq的实例
-func NewRabbitMQFanout(exchangeName, mqUrl string) (rabbitMqFanout *RabbitMqFanout, err error) {
+func NewMQFanout(exchangeName, mqUrl string) (rabbitMqFanout *MqFanout, err error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName and mqUrl is required")
@@ -36,13 +35,13 @@ func NewRabbitMQFanout(exchangeName, mqUrl string) (rabbitMqFanout *RabbitMqFano
 		return nil, err
 	}
 
-	return &RabbitMqFanout{
+	return &MqFanout{
 		rabbitmq,
 	}, nil
 }
 
 // Publish 订阅模式发布消息
-func (r *RabbitMqFanout) Publish(message string) error {
+func (r *MqFanout) Publish(message string) error {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
@@ -62,7 +61,7 @@ func (r *RabbitMqFanout) Publish(message string) error {
 	return r.RabbitMQ.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName, // 交换机名称
-		"",             // 路由参数，fanout类型交换机，自动忽略路由参数
+		r.Key,          // 路由参数，fanout类型交换机，自动忽略路由参数
 		false,
 		false,
 		amqp.Publishing{
@@ -74,7 +73,7 @@ func (r *RabbitMqFanout) Publish(message string) error {
 }
 
 // Consume 订阅模式消费者
-func (r *RabbitMqFanout) Consume(handler func([]byte) error) error {
+func (r *MqFanout) Consume(handler func([]byte) error) error {
 	// 1 创建交换机exchange
 	logger.Info("----- begin consume----")
 	if err := r.exchangeDeclare(); err != nil {
@@ -146,7 +145,7 @@ func (r *RabbitMqFanout) Consume(handler func([]byte) error) error {
 }
 
 // PublishDelay 发布延迟队列
-func (r *RabbitMqFanout) PublishDelay(message string, ttl string) error {
+func (r *MqFanout) PublishDelay(message string, ttl string) error {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
@@ -193,7 +192,7 @@ func (r *RabbitMqFanout) PublishDelay(message string, ttl string) error {
 }
 
 // ConsumeDelay 消费延迟队列
-func (r *RabbitMqFanout) ConsumeDelay(handler func([]byte) error) error {
+func (r *MqFanout) ConsumeDelay(handler func([]byte) error) error {
 	// 1 声明延迟交换机.
 	if err := r.channel.ExchangeDeclare(
 		r.ExchangeName,
@@ -255,7 +254,7 @@ func (r *RabbitMqFanout) ConsumeDelay(handler func([]byte) error) error {
 }
 
 // ConsumeFailToDlx 消费失败后投递到死信交换机
-func (r *RabbitMqFanout) ConsumeFailToDlx(handler func([]byte) error) error {
+func (r *MqFanout) ConsumeFailToDlx(handler func([]byte) error) error {
 	// 1 创建交换机exchange
 	logger.Info("----- begin consume----")
 	if err := r.exchangeDeclare(); err != nil {
@@ -336,7 +335,7 @@ func (r *RabbitMqFanout) ConsumeFailToDlx(handler func([]byte) error) error {
 }
 
 // ConsumeDlx 死信消费
-func (r *RabbitMqFanout) ConsumeDlx(handler func([]byte) error) error {
+func (r *MqFanout) ConsumeDlx(handler func([]byte) error) error {
 	// 1. 创建死信交换机.
 	if err := r.dlxExchangeDeclare(); err != nil {
 		logger.Info("Consume dlxExchangeDeclare error: ", err)
@@ -419,7 +418,7 @@ func (r *RabbitMqFanout) ConsumeDlx(handler func([]byte) error) error {
 	return nil
 }
 
-func (r *RabbitMqFanout) exchangeDeclare() error {
+func (r *MqFanout) exchangeDeclare() error {
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName,
 		"fanout", // 这里一定要设计为"fanout"也就是广播类型。
@@ -430,7 +429,7 @@ func (r *RabbitMqFanout) exchangeDeclare() error {
 		nil,
 	)
 }
-func (r *RabbitMqFanout) queueDeclare() (amqp.Queue, error) {
+func (r *MqFanout) queueDeclare() (amqp.Queue, error) {
 	return r.channel.QueueDeclare(
 		"", // 随机生产队列名称
 		true,
@@ -441,7 +440,7 @@ func (r *RabbitMqFanout) queueDeclare() (amqp.Queue, error) {
 	)
 }
 
-func (r *RabbitMqFanout) queueBind(qname string) error {
+func (r *MqFanout) queueBind(qname string) error {
 	return r.channel.QueueBind(
 		qname, // 队列名称
 		"",    // 在pub/sub模式下key要为空
@@ -452,7 +451,7 @@ func (r *RabbitMqFanout) queueBind(qname string) error {
 }
 
 // DlxDeclare 声明死信交换机
-func (r *RabbitMqFanout) dlxExchangeDeclare() error {
+func (r *MqFanout) dlxExchangeDeclare() error {
 	// 死信交换机
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName+"-dlx", // 死信交换机名字
