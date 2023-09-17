@@ -154,7 +154,7 @@ func example12Delay() {
 }
 
 func doConsumeMsg(msg []byte) error {
-	fmt.Println("------------Simple ConsumeMsg error: ", string(msg))
+	fmt.Println("------------Simple Consume Msg ----------- : ", string(msg))
 	// return nil
 	return errors.New("test retry error")
 }

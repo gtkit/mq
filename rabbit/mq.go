@@ -28,7 +28,7 @@ https://blog.csdn.net/qq_28710983/article/details/105129432#:~:text=%E7%A1%AE%E8
    	（#:一个或多个词，*：一个词）的方式指定。
 */
 
-// todo：设置重试的次数
+// todo：设置连接重试的次数
 const Delay = 1 // reconnect after delay seconds
 // RabbitMQ RabbitMQ实例
 type RabbitMQ struct {
@@ -39,7 +39,6 @@ type RabbitMQ struct {
 	Key          string           // Binding Key/Routing Key, Simple模式 几乎用不到
 	MqURL        string           // 连接信息-amqp://账号:密码@地址:端口号/-amqp://guest:guest@127.0.0.1:5672/
 	ctx          context.Context
-	cancel       context.CancelFunc
 
 	notifyConfirm chan amqp.Confirmation // 确认发送到mq的channel
 
@@ -65,14 +64,13 @@ type RabbitMQInterface interface {
 
 // NewRabbitMQ 创建一个RabbitMQ实例
 func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+
 	mq = &RabbitMQ{
 		QueueName:    queueName,
 		ExchangeName: exchangeName,
 		Key:          key,
 		MqURL:        mqUrl,
-		ctx:          ctx,
-		cancel:       cancel,
+		ctx:          context.Background(),
 	}
 
 	// 创建rabbitmq连接
@@ -169,7 +167,6 @@ func (r *RabbitMQ) Destroy() {
 	logger.Infof("%s,%s is closed!!!", r.ExchangeName, r.QueueName)
 	r.channel.Close()
 	r.conn.Close()
-	r.cancel()
 
 }
 
@@ -284,7 +281,7 @@ func (r *RabbitMQ) RetryMsg(msg amqp.Delivery, ttl string) error {
 			"x-dead-letter-exchange": dlxName, // 死信交换机
 		},
 	); err != nil {
-		fmt.Println("---retry queue err: ", err)
+		logger.Info("---retry queue err: ", err)
 	}
 	return r.channel.PublishWithContext(
 		r.ctx,

@@ -65,7 +65,10 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 		false,       // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
 		false,       // 是否具有排他性
 		false,       // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
-		nil,
+		amqp.Table{
+			"x-max-length":       100,
+			"x-max-length-bytes": 65535,
+		},
 	); err != nil {
 		logger.Info("--QueueDeclare error:", err)
 		return err
@@ -102,7 +105,10 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		false, // 是否自动删除
 		false, // 是否具有排他性
 		false, // 是否阻塞处理
-		nil,
+		amqp.Table{
+			"x-max-length":       100,
+			"x-max-length-bytes": 65535,
+		},
 	)
 	if err != nil {
 		logger.Info("--Consume QueueDeclare error: ", err)
@@ -142,7 +148,9 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 			if !ok {
 				retry = int32(0)
 			}
+
 			if retry > 3 {
+				logger.Info("***************** handler msg err > 3 ***********", string(msg.Body))
 				if err = msg.Reject(false); err != nil {
 					// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 					logger.Info("-----------reject error: ", err, "----------")
@@ -151,9 +159,10 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 					logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "--Reject msg:", string(msg.Body))
 				}
 			} else {
-				logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "-- msg:", string(msg.Body))
+				logger.Info("***************** handler msg err < 3 ***********", string(msg.Body))
+				//logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "-- msg:", string(msg.Body))
 				msg.Headers["x-retry"] = retry + 1
-				if err := r.RetryMsg(msg, "2000"); err != nil {
+				if err := r.RetryMsg(msg, "1000"); err != nil {
 					logger.Info("---- publish retry msg error: ", err)
 				} else {
 					logger.Info("---- publish retry msg success -----", string(msg.Body))
@@ -168,7 +177,8 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		// // 确认一条消息，false表示确认当前消息，true表示确认当前消息和之前所有未确认的消息
 		if err := msg.Ack(false); err != nil {
 			logger.Info("message ack error:", err, " message id: ", msg.MessageId)
-			continue
+		} else {
+			logger.Info("======= msg ack sucess =====")
 		}
 
 	}
