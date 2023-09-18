@@ -1,6 +1,7 @@
 package test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -16,12 +17,12 @@ func TestSimpleMq(t *testing.T) {
 }
 func example12() {
 	var queueName = "queue-simple"
-	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(context.Background(), queueName, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(context.Background(), queueName, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -59,12 +60,13 @@ func TestSimpleMqDlx(t *testing.T) {
 }
 func example12Dlx() {
 	var queueName = "queue3-dlx"
-	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+
+	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(context.Background(), queueName, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(context.Background(), queueName, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -114,12 +116,12 @@ func TestSimpleDelay(t *testing.T) {
 }
 func example12Delay() {
 	var queueName = "delay-queue"
-	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+	rabbitmq1, err1 := rabbit.NewRabbitMQSimple(context.Background(), queueName, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(queueName, MQURL)
+	rabbitmq2, err2 := rabbit.NewRabbitMQSimple(context.Background(), queueName, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)

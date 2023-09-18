@@ -2,6 +2,7 @@
 package test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -34,7 +35,7 @@ func exampleDirectDlx() {
 		// queueName  = "queue.direct"
 		queueName = ""
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect(exchange, queueName, routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), exchange, queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
@@ -84,12 +85,12 @@ func exampleDirectDelay() {
 		routingKey = "key.direct.delay"
 		exchange   = "exchange.direct.delay"
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect(exchange, "", routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), exchange, "", routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
-	rabbitmq2, err2 := rabbit.NewMQDirect(exchange, "", routingKey, MQURL)
+	rabbitmq2, err2 := rabbit.NewMQDirect(context.Background(), exchange, "", routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -126,12 +127,12 @@ func exampleDirect() {
 		queueName  = "my_direct_queue"
 		// queueName = ""
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect("exchange.direct", queueName, routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), "exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println("rabbitmq1-----", err1)
 	}
-	rabbitmq2, err2 := rabbit.NewMQDirect("exchange.direct", queueName, routingKey, MQURL)
+	rabbitmq2, err2 := rabbit.NewMQDirect(context.Background(), "exchange.direct", queueName, routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println("rabbitmq2----", err2)

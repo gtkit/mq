@@ -2,6 +2,7 @@
 package rabbit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -16,12 +17,12 @@ type MqTopic struct {
 }
 
 // NewMQTopic 获取话题模式下的rabbitmq的实例
-func NewMQTopic(exchangeName, routingKey, mqUrl string) (rabbitMQTopic *MqTopic, err error) {
+func NewMQTopic(ctx context.Context, exchangeName, routingKey, mqUrl string) (rabbitMQTopic *MqTopic, err error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || routingKey == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
 	}
-	rabbitmq, err := newRabbitMQ(exchangeName, "", routingKey, mqUrl)
+	rabbitmq, err := newRabbitMQ(ctx, exchangeName, "", routingKey, mqUrl)
 	if err != nil {
 		return nil, err
 	}

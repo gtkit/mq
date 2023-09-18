@@ -1,6 +1,7 @@
 package rabbit
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -14,12 +15,12 @@ type MqDirect struct {
 }
 
 // NewMQDirect 获取路由模式下的rabbitmq的实例.
-func NewMQDirect(exchangeName, queueName, routingKey, mqUrl string) (*MqDirect, error) {
+func NewMQDirect(ctx context.Context, exchangeName, queueName, routingKey, mqUrl string) (*MqDirect, error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || routingKey == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
 	}
-	rabbitmq, err := newRabbitMQ(exchangeName, queueName, routingKey, mqUrl)
+	rabbitmq, err := newRabbitMQ(ctx, exchangeName, queueName, routingKey, mqUrl)
 	if err != nil {
 		return nil, err
 	}

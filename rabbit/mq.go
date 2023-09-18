@@ -29,7 +29,11 @@ https://blog.csdn.net/qq_28710983/article/details/105129432#:~:text=%E7%A1%AE%E8
 */
 
 // todo：设置连接重试的次数
-const Delay = 1 // reconnect after delay seconds
+const (
+	Delay = 1 // reconnect after delay seconds
+	Retry = 3
+)
+
 // RabbitMQ RabbitMQ实例
 type RabbitMQ struct {
 	conn         *amqp.Connection // 连接
@@ -63,14 +67,14 @@ type RabbitMQInterface interface {
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
-func newRabbitMQ(exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
+func newRabbitMQ(ctx context.Context, exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
 
 	mq = &RabbitMQ{
 		QueueName:    queueName,
 		ExchangeName: exchangeName,
 		Key:          key,
 		MqURL:        mqUrl,
-		ctx:          context.Background(),
+		ctx:          ctx,
 	}
 
 	// 创建rabbitmq连接

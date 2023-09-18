@@ -1,6 +1,7 @@
 package rabbit
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -21,13 +22,13 @@ type MqFanout struct {
 }
 
 // NewRabbitMQFanout 获取订阅模式下的rabbitmq的实例
-func NewMQFanout(exchangeName, mqUrl string) (rabbitMqFanout *MqFanout, err error) {
+func NewMQFanout(ctx context.Context, exchangeName, mqUrl string) (rabbitMqFanout *MqFanout, err error) {
 	// 判断是否输入必要的信息
 	if exchangeName == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName and mqUrl is required")
 	}
 	// 创建rabbitmq实例
-	rabbitmq, err := newRabbitMQ(exchangeName, "", "", mqUrl)
+	rabbitmq, err := newRabbitMQ(ctx, exchangeName, "", "", mqUrl)
 	if err != nil {
 		return nil, err
 	}

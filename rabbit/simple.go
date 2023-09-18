@@ -2,6 +2,7 @@
 package rabbit
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -24,13 +25,13 @@ type RabbitMQSimple struct {
 }
 
 // NewRabbitMQSimple 创建简单模式下的实例，只需要queueName这个参数，其中exchange是默认的，key则不需要。
-func NewRabbitMQSimple(queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple, err error) {
+func NewRabbitMQSimple(ctx context.Context, queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple, err error) {
 	// 判断是否输入必要的信息
 	if queueName == "" || mqUrl == "" {
 		logger.Infof("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", queueName, mqUrl)
 		return nil, errors.New("QueueName and mqUrl is required")
 	}
-	rabbitmq, err := newRabbitMQ("", queueName, "", mqUrl)
+	rabbitmq, err := newRabbitMQ(ctx, "", queueName, "", mqUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -144,32 +145,36 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 
 		if err := handler(msg.Body); err != nil {
 
-			retry, ok := msg.Headers["x-retry"].(int32)
-			if !ok {
-				retry = int32(0)
-			}
-
-			if retry > 3 {
-				logger.Info("***************** handler msg err > 3 ***********", string(msg.Body))
-				if err = msg.Reject(false); err != nil {
-					// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
-					logger.Info("-----------reject error: ", err, "----------")
+			go func() {
+				retry, ok := msg.Headers["x-retry"].(int32)
+				fmt.Println("--------协程处理失败消息重试--------", retry, "----", string(msg.Body))
+				if !ok {
+					retry = int32(0)
+				}
+				if retry > 3 {
+					logger.Info("***************** handler msg err > 3 ***********", string(msg.Body))
 					// 多次消费失败后要对消息做处理 接插入db日志, db日志可以记录交换机 路由，queuename
-				} else {
-					logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "--Reject msg:", string(msg.Body))
-				}
-			} else {
-				logger.Info("***************** handler msg err < 3 ***********", string(msg.Body))
-				//logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "-- msg:", string(msg.Body))
-				msg.Headers["x-retry"] = retry + 1
-				if err := r.RetryMsg(msg, "1000"); err != nil {
-					logger.Info("---- publish retry msg error: ", err)
-				} else {
-					logger.Info("---- publish retry msg success -----", string(msg.Body))
-				}
-				_ = msg.Ack(false)
+					// db create
+					if err = msg.Reject(false); err != nil {
+						// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
+						logger.Info("-----------reject error: ", err, "----------")
 
-			}
+					} else {
+						logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "--Reject msg:", string(msg.Body))
+					}
+				} else {
+					logger.Info("***************** handler msg err < 3 ***********", string(msg.Body))
+					// logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "-- msg:", string(msg.Body))
+					msg.Headers["x-retry"] = retry + 1
+					if err := r.RetryMsg(msg, "1000"); err != nil {
+						logger.Info("---- publish retry msg error: ", err)
+					} else {
+						logger.Info("---- publish retry msg success -----", string(msg.Body))
+					}
+					_ = msg.Ack(false)
+
+				}
+			}()
 
 			continue
 		}
