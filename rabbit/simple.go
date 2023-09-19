@@ -17,15 +17,15 @@ import (
 1 Simple模式，最简单最常用的模式
 2 Work模式，一个消息只能被一个消费者消费
 */
-var _ RabbitMQInterface = (*RabbitMQSimple)(nil)
+var _ RabbitMQInterface = (*MqSimple)(nil)
 
-// RabbitMQSimple 简单模式下的RabbitMQ实例
-type RabbitMQSimple struct {
+// MqSimple 简单模式下的RabbitMQ实例
+type MqSimple struct {
 	*RabbitMQ
 }
 
-// NewRabbitMQSimple 创建简单模式下的实例，只需要queueName这个参数，其中exchange是默认的，key则不需要。
-func NewRabbitMQSimple(ctx context.Context, queueName, mqUrl string) (rabbitMQSimple *RabbitMQSimple, err error) {
+// NewMQSimple 创建简单模式下的实例，只需要queueName这个参数，其中exchange是默认的，key则不需要。
+func NewMQSimple(ctx context.Context, queueName, mqUrl string) (rabbitMQSimple *MqSimple, err error) {
 	// 判断是否输入必要的信息
 	if queueName == "" || mqUrl == "" {
 		logger.Infof("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", queueName, mqUrl)
@@ -43,13 +43,13 @@ func NewRabbitMQSimple(ctx context.Context, queueName, mqUrl string) (rabbitMQSi
 	if err != nil {
 		return nil, err
 	}
-	return &RabbitMQSimple{
+	return &MqSimple{
 		rabbitmq,
 	}, nil
 }
 
 // Publish 直接模式,生产者.
-func (r *RabbitMQSimple) Publish(message string) (err error) {
+func (r *MqSimple) Publish(message string) (err error) {
 
 	select {
 	case <-r.ctx.Done():
@@ -67,8 +67,7 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 		false,       // 是否具有排他性
 		false,       // 是否阻塞 发送消息以后是否要等待消费者的响应 消费了下一个才进来 就跟golang里面的无缓冲channle一个道理 默认为非阻塞即可设置为false
 		amqp.Table{
-			"x-max-length":       100,
-			"x-max-length-bytes": 65535,
+			"x-max-priority": 10, // 设置队列最大优先级, 建议最好在1到10之间
 		},
 	); err != nil {
 		logger.Info("--QueueDeclare error:", err)
@@ -93,12 +92,13 @@ func (r *RabbitMQSimple) Publish(message string) (err error) {
 			Headers: amqp.Table{
 				"x-retry": 0,
 			},
+			Priority: 1, // 设置消息优先级
 		})
 
 }
 
 // Consume 直接模式，消费者
-func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
+func (r *MqSimple) Consume(handler MsgHandler) (err error) {
 	// 1 申请队列,如果队列不存在则自动创建,存在则跳过
 	q, err := r.channel.QueueDeclare(
 		r.QueueName,
@@ -106,10 +106,7 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		false, // 是否自动删除
 		false, // 是否具有排他性
 		false, // 是否阻塞处理
-		amqp.Table{
-			"x-max-length":       100,
-			"x-max-length-bytes": 65535,
-		},
+		nil,
 	)
 	if err != nil {
 		logger.Info("--Consume QueueDeclare error: ", err)
@@ -131,59 +128,56 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 		return err
 	}
 	for msg := range deliveries {
+		failedmsg := FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msg.MessageId,
+			Message:      msg.Body,
+		}
 		select {
 		case <-r.Ctx().Done():
 			logger.Info("======ctx done==========")
+			handler.Failed(failedmsg)
 			if err := msg.Reject(false); err != nil { // 如果要放入死信交换机， Reject 要为false 才行
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
-
 		}
 
-		if err := handler(msg.Body); err != nil {
-
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			go func() {
 				retry, ok := msg.Headers["x-retry"].(int32)
-				fmt.Println("--------协程处理失败消息重试--------", retry, "----", string(msg.Body))
 				if !ok {
 					retry = int32(0)
 				}
 				if retry > 3 {
-					logger.Info("***************** handler msg err > 3 ***********", string(msg.Body))
 					// 多次消费失败后要对消息做处理 接插入db日志, db日志可以记录交换机 路由，queuename
+					handler.Failed(failedmsg)
 					// db create
 					if err = msg.Reject(false); err != nil {
 						// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 						logger.Info("-----------reject error: ", err, "----------")
-
-					} else {
-						logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "--Reject msg:", string(msg.Body))
 					}
 				} else {
-					logger.Info("***************** handler msg err < 3 ***********", string(msg.Body))
-					// logger.Info("----msg.Headers[x-retry]--", msg.Headers["x-retry"], "-- msg:", string(msg.Body))
 					msg.Headers["x-retry"] = retry + 1
 					if err := r.RetryMsg(msg, "1000"); err != nil {
 						logger.Info("---- publish retry msg error: ", err)
-					} else {
-						logger.Info("---- publish retry msg success -----", string(msg.Body))
 					}
-					_ = msg.Ack(false)
+					if err = msg.Ack(false); err != nil {
+						logger.Info("retry msg ack err: ", err)
+					}
 
 				}
 			}()
-
 			continue
 		}
 
 		// // 确认一条消息，false表示确认当前消息，true表示确认当前消息和之前所有未确认的消息
 		if err := msg.Ack(false); err != nil {
 			logger.Info("message ack error:", err, " message id: ", msg.MessageId)
-		} else {
-			logger.Info("======= msg ack sucess =====")
 		}
 
 	}
@@ -192,7 +186,7 @@ func (r *RabbitMQSimple) Consume(handler func([]byte) error) (err error) {
 }
 
 // PublishDelay 发送延迟队列
-func (r *RabbitMQSimple) PublishDelay(message string, ttl string) error {
+func (r *MqSimple) PublishDelay(message string, ttl string) error {
 
 	select {
 	case <-r.ctx.Done():
@@ -233,7 +227,7 @@ func (r *RabbitMQSimple) PublishDelay(message string, ttl string) error {
 
 	// 2 发送消息到队列中
 	msgId := uuid.New().String()
-	err = r.channel.PublishWithContext(
+	return r.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
 		r.QueueName,    // 路由参数， 这里使用队列的名字作为路由参数
@@ -247,16 +241,15 @@ func (r *RabbitMQSimple) PublishDelay(message string, ttl string) error {
 			MessageId:    msgId,
 			Body:         []byte(message),
 			Expiration:   ttl, // push 时 在消息本体上设置expiration超时时间，单位为毫秒级别 类型为 string
+			Headers: amqp.Table{
+				"x-retry": 0,
+			},
 		})
-	if err != nil {
-		logger.Info("--PublishWithContext error: ", err)
-	}
-	logger.Info("--------------Delay Publish ----------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
-	return err
+
 }
 
 // ConsumeDelay 消费延迟队列
-func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
+func (r *MqSimple) ConsumeDelay(handler MsgHandler) error {
 
 	// 1 声明死信交换机
 	dlxName := r.QueueName + "-delay-Ex"
@@ -284,21 +277,28 @@ func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
 		return err
 	}
 	for msg := range deliveries {
-
-		logger.Info("--------------Delay Consume ----------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		failedmsg := FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msg.MessageId,
+			Message:      msg.Body,
+		}
 		select {
 		case <-r.Ctx().Done():
-			if err := msg.Reject(true); err != nil {
+			handler.Failed(failedmsg)
+			if err := msg.Reject(false); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
-
 		}
-		if err := handler(msg.Body); err != nil {
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			logger.Info("--DlqConsume handler err: ", err)
-			if err = msg.Reject(true); err != nil {
+			// 失败处理
+			handler.Failed(failedmsg)
+			if err = msg.Reject(false); err != nil {
 				logger.Info("reject error: ", err)
 			}
 			continue
@@ -313,9 +313,8 @@ func (r *RabbitMQSimple) ConsumeDelay(handler func([]byte) error) error {
 
 }
 
-// PublishWithXdl 带有死信交换机的发送
-func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
-
+// PublishWithDlx 带有死信交换机的发送
+func (r *MqSimple) PublishWithDlx(message string) (err error) {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish")
@@ -354,7 +353,7 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 
 	// 2 发送消息到队列中
 	msgId := uuid.New().String()
-	err = r.channel.PublishWithContext(
+	return r.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
 		r.QueueName,    // 路由参数， 这里使用队列的名字作为路由参数
@@ -368,15 +367,11 @@ func (r *RabbitMQSimple) PublishWithXdl(message string) (err error) {
 			MessageId:    msgId,
 			Body:         []byte(message),
 		})
-	if err != nil {
-		logger.Info("--PublishWithContext error: ", err)
-	}
-	logger.Info("------------Simple Publish --------msgId----", msgId, " time: "+time.Now().Format(time.DateTime))
-	return err
+
 }
 
 // ConsumeFailToDlx 带有死信交换机的消费
-func (r *RabbitMQSimple) ConsumeFailToDlx(handler func([]byte) error) error {
+func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 	// 1 声明死信交换机
 	var dlxName = "dlx-" + r.QueueName
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
@@ -418,7 +413,6 @@ func (r *RabbitMQSimple) ConsumeFailToDlx(handler func([]byte) error) error {
 		return err
 	}
 	for msg := range deliveries {
-		logger.Info("------------Simple Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
 		select {
 		case <-r.Ctx().Done():
 			logger.Info("======ctx done==========")
@@ -430,15 +424,12 @@ func (r *RabbitMQSimple) ConsumeFailToDlx(handler func([]byte) error) error {
 		default:
 
 		}
-		// logger.Info("-----messageId: ", msg.MessageId)
 
-		if err := handler(msg.Body); err != nil {
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
+			// 如果要放入死信交换机， Reject 要为false 才行, true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 			if err = msg.Reject(false); err != nil {
-				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("-----------reject error: ", err, "----------")
 			}
-			// mq.DlqConsume(mq.QueueName, "dead-letter-queue-"+mq.QueueName, "", dlxDo)
-
 			continue
 		}
 
@@ -454,8 +445,7 @@ func (r *RabbitMQSimple) ConsumeFailToDlx(handler func([]byte) error) error {
 }
 
 // ConsumeDlx 消费死信队列
-func (r *RabbitMQSimple) ConsumeDlx(handler func([]byte) error) error {
-
+func (r *MqSimple) ConsumeDlx(handler MsgHandler) error {
 	// 死信交换机
 	dlxName := "dlx-" + r.QueueName
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
@@ -484,20 +474,28 @@ func (r *RabbitMQSimple) ConsumeDlx(handler func([]byte) error) error {
 		return err
 	}
 	for msg := range deliveries {
-		logger.Info("------------DLX Consume --------msgId----", msg.MessageId, " time: "+time.Now().Format(time.DateTime))
+		failedmsg := FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msg.MessageId,
+			Message:      msg.Body,
+		}
 		select {
 		case <-r.Ctx().Done():
-			if err := msg.Reject(true); err != nil {
+			handler.Failed(failedmsg)
+			if err := msg.Reject(false); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("reject error: ", err)
 			}
 			return fmt.Errorf("context cancel Consume")
 		default:
-
 		}
-		if err := handler(msg.Body); err != nil {
+		// 处理消息
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			logger.Info("--DlqConsume handler err: ", err)
-			if err = msg.Reject(true); err != nil {
+			handler.Failed(failedmsg)
+			if err = msg.Reject(false); err != nil {
 				logger.Info("reject error: ", err)
 			}
 			continue
@@ -509,5 +507,65 @@ func (r *RabbitMQSimple) ConsumeDlx(handler func([]byte) error) error {
 
 	}
 	return nil
+}
+
+func (r *MqSimple) RetryMsg(msg amqp.Delivery, ttl string) error {
+	select {
+	case <-r.ctx.Done():
+		return fmt.Errorf("context cancel publish")
+	default:
+	}
+	// 确认消息监听函数， 启动一个协程，监听消息发送情况
+	r.ListenConfirm()
+
+	// 声明死信交换机
+	dlxName := r.QueueName + "-retry-Ex"
+	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
+		logger.Info("--DlqConsume DlxDeclare err 1: ", err)
+		return err
+	}
+
+	// 绑定主队列到 exchange 中
+	if err := r.channel.QueueBind(r.QueueName, "#", dlxName, false, nil); err != nil {
+		logger.Info("--DlqConsume QueueBind err: ", err)
+		return err
+	}
+
+	// 声明重试队列
+	retryQueue := r.QueueName + "-retry"
+	if _, err := r.channel.QueueDeclare(
+		retryQueue,
+		true,
+		false,
+		false,
+		false,
+		amqp.Table{
+			"x-dead-letter-exchange": dlxName, // 死信交换机
+			"x-max-priority":         10,
+		},
+	); err != nil {
+		logger.Info("---retry queue err: ", err)
+	}
+	priority, ok := msg.Headers["x-retry"].(uint8)
+	if !ok {
+		priority = 1
+	}
+	return r.channel.PublishWithContext(
+		r.ctx,
+		r.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
+		retryQueue,     // 路由参数， 这里使用队列的名字作为路由参数
+		false,          // 如果为true 会根据exchange类型和routkey规则，如果无法找到符合条件的队列那么会把发送的消息返还给发送者
+		false,          // 如果为true,当exchange发送消息到队列后发现队列上没有绑定消费者则会把消息返还给发送者
+		amqp.Publishing{
+			// 消息内容持久化，这个很关键
+			DeliveryMode: amqp.Persistent,
+			ContentType:  msg.ContentType,
+			Body:         msg.Body,
+			Headers:      msg.Headers,
+			MessageId:    msg.MessageId,
+			Timestamp:    time.Now(),
+			Expiration:   ttl,
+			Priority:     priority, // 设置消息优先级
+		})
 
 }

@@ -51,7 +51,7 @@ func (r *MqTopic) Publish(message string) error {
 	return r.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName,
-		r.Key,
+		r.Routing,
 		false,
 		false,
 		amqp.Publishing{
@@ -62,7 +62,7 @@ func (r *MqTopic) Publish(message string) error {
 }
 
 // Consume topic模式。消费者。"*"表示匹配一个单词。“#”表示匹配多个单词，亦可以是0个。
-func (r *MqTopic) Consume(handler func([]byte) error) error {
+func (r *MqTopic) Consume(handler MsgHandler) error {
 	// 1 创建交换机。这里的kind需要是“topic”类型。
 	if err := r.exchangeDeclare(); err != nil {
 		return err
@@ -76,7 +76,7 @@ func (r *MqTopic) Consume(handler func([]byte) error) error {
 	// 3 将队列绑定到交换机里。
 	if err := r.channel.QueueBind(
 		r.QueueName,
-		"*."+r.Key, // 路由参数，关键参数，使用了通配符 * 星号，匹配一个单词，如果使用 # 井号可以匹配多个单词.
+		"*."+r.Routing, // 路由参数，关键参数，使用了通配符 * 星号，匹配一个单词，如果使用 # 井号可以匹配多个单词.
 		r.ExchangeName,
 		false,
 		nil,
@@ -110,9 +110,7 @@ func (r *MqTopic) Consume(handler func([]byte) error) error {
 		}
 
 		// 处理消息
-		err = handler(msg.Body)
-		// 消费失败处理
-		if err != nil {
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 			if err := msg.Reject(true); err != nil {
 				logger.Info("reject error: ", err)

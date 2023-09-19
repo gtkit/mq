@@ -16,6 +16,26 @@ func TestDealySubMq(t *testing.T) {
 	exampleDelay()
 }
 
+type DelayMsg1 struct {
+}
+
+func (m *DelayMsg1) Process([]byte, string) error {
+	return nil
+}
+func (m *DelayMsg1) Failed(msg rabbit.FailedMsg) {
+
+}
+
+type DelayMsg2 struct {
+}
+
+func (m *DelayMsg2) Process([]byte, string) error {
+	return nil
+}
+func (m *DelayMsg2) Failed(msg rabbit.FailedMsg) {
+
+}
+
 func exampleDelay() {
 	rabbitmq1, err1 := rabbit.NewMQFanout(context.Background(), "exchange.delay", MQURL)
 	defer rabbitmq1.Destroy()
@@ -46,7 +66,7 @@ func exampleDelay() {
 
 	// 消费者1
 	go func() {
-		err := rabbitmq2.ConsumeDelay(doExampleDelayMsg)
+		err := rabbitmq2.ConsumeDelay(&DelayMsg1{})
 		if err != nil {
 			fmt.Println("----ConsumeDelay 1 error: ", err)
 			return
@@ -55,7 +75,7 @@ func exampleDelay() {
 
 	// 消费者2
 	go func() {
-		err := rabbitmq3.ConsumeDelay(doExampleDelayMsg2)
+		err := rabbitmq3.ConsumeDelay(&DelayMsg2{})
 		if err != nil {
 			fmt.Println("----ConsumeDelay 2 error: ", err)
 			return

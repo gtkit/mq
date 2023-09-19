@@ -51,7 +51,7 @@ func (r *MqDirect) Publish(message string) (err error) {
 		r.ctx,
 		r.ExchangeName,
 		// Binding Key
-		r.Key,
+		r.Routing,
 		false,
 		false,
 		amqp.Publishing{
@@ -65,7 +65,7 @@ func (r *MqDirect) Publish(message string) (err error) {
 }
 
 // Consume 路由模式接收信息
-func (r *MqDirect) Consume(handler func([]byte) error) error {
+func (r *MqDirect) Consume(handler MsgHandler) error {
 	// 1 尝试创建交换机，不存在创建
 	if err := r.exchangeDeclare(); err != nil {
 		return errors.WithMessage(err, "---exchangeDeclare---")
@@ -114,7 +114,7 @@ func (r *MqDirect) Consume(handler func([]byte) error) error {
 		}
 
 		// 处理消息
-		err = handler(msg.Body)
+		err = handler.Process(msg.Body, msg.MessageId)
 		// 消费失败处理
 		if err != nil {
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
@@ -156,7 +156,7 @@ func (r *MqDirect) PublishDelay(message string, ttl string) error {
 	return r.RabbitMQ.channel.PublishWithContext(
 		r.ctx,
 		r.ExchangeName, // 交换机名称
-		r.Key,          // 路由参数，fanout类型交换机，自动忽略路由参数
+		r.Routing,      // 路由参数，fanout类型交换机，自动忽略路由参数
 		false,
 		false,
 		amqp.Publishing{
@@ -172,7 +172,7 @@ func (r *MqDirect) PublishDelay(message string, ttl string) error {
 }
 
 // ConsumeDelay 消费延迟队列
-func (r *MqDirect) ConsumeDelay(handler func([]byte) error) error {
+func (r *MqDirect) ConsumeDelay(handler MsgHandler) error {
 	// 1 声明延迟交换机.
 	if err := r.delayExchange(); err != nil {
 		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
@@ -205,7 +205,7 @@ func (r *MqDirect) ConsumeDelay(handler func([]byte) error) error {
 			return fmt.Errorf("context cancel Consume")
 		default:
 		}
-		if err := handler(msg.Body); err != nil {
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			logger.Info("--DlqConsume handler err: ", err)
 			if err = msg.Reject(true); err != nil {
 				logger.Info("reject error: ", err)
@@ -223,7 +223,7 @@ func (r *MqDirect) ConsumeDelay(handler func([]byte) error) error {
 }
 
 // ConsumeFailToDlx 消费失败后投递到死信交换机
-func (r *MqDirect) ConsumeFailToDlx(handler func([]byte) error) error {
+func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 	// 1 创建交换机exchange
 	if err := r.exchangeDeclare(); err != nil {
 		logger.Info("Consume exchangeDeclare error: ", err)
@@ -270,7 +270,7 @@ func (r *MqDirect) ConsumeFailToDlx(handler func([]byte) error) error {
 		}
 
 		// 处理消息
-		err = handler(msg.Body)
+		err = handler.Process(msg.Body, msg.MessageId)
 		// 消费失败处理
 		if err != nil {
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误, false 表示不重新放回队列
@@ -293,7 +293,7 @@ func (r *MqDirect) ConsumeFailToDlx(handler func([]byte) error) error {
 }
 
 // ConsumeDlx 死信消费
-func (r *MqDirect) ConsumeDlx(handler func([]byte) error) error {
+func (r *MqDirect) ConsumeDlx(handler MsgHandler) error {
 	// 1. 创建死信交换机.
 	if err := r.dlxExchange(); err != nil {
 		logger.Info("Consume dlxExchangeDeclare error: ", err)
@@ -318,7 +318,7 @@ func (r *MqDirect) ConsumeDlx(handler func([]byte) error) error {
 	// 3. 绑定死信队列到死信交换机中.
 	if err := r.channel.QueueBind(
 		dlxq.Name,
-		r.Key+".dlx", // 死信队列路由, # 井号的意思就匹配所有路由参数，意思就是接收所有死信消息
+		r.Routing+".dlx", // 死信队列路由, # 井号的意思就匹配所有路由参数，意思就是接收所有死信消息
 		r.ExchangeName+".dlx",
 		false,
 		nil,
@@ -355,9 +355,7 @@ func (r *MqDirect) ConsumeDlx(handler func([]byte) error) error {
 		}
 
 		// 处理消息
-		err = handler(msg.Body)
-		// 消费失败处理
-		if err != nil {
+		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 			if err := msg.Reject(true); err != nil {
 				logger.Info("reject error: ", err)
@@ -404,7 +402,7 @@ func (r *MqDirect) queueDeclareWithDlx() error {
 		false,
 		amqp.Table{
 			"x-dead-letter-exchange":    r.ExchangeName + ".dlx", // 声明当前队列绑定的 死信交换机
-			"x-dead-letter-routing-key": r.Key + ".dlx",          // 死信路由
+			"x-dead-letter-routing-key": r.Routing + ".dlx",      // 死信路由
 		},
 	)
 	if err != nil {

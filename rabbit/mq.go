@@ -40,7 +40,7 @@ type RabbitMQ struct {
 	channel      *amqp.Channel    // 管道
 	ExchangeName string           // 交换机名称
 	QueueName    string           // 队列名称
-	Key          string           // Binding Key/Routing Key, Simple模式 几乎用不到
+	Routing      string           // Binding Key/Routing Key, Simple模式 几乎用不到
 	MqURL        string           // 连接信息-amqp://账号:密码@地址:端口号/-amqp://guest:guest@127.0.0.1:5672/
 	ctx          context.Context
 
@@ -51,19 +51,31 @@ type RabbitMQ struct {
 	msgExpiration string // 消息过期时间
 }
 
+type MsgHandler interface {
+	Process([]byte, string) error
+	Failed(msg FailedMsg)
+}
+type FailedMsg struct {
+	ExchangeName string // 交换机名称
+	QueueName    string // 队列名称
+	Routing      string
+	MsgId        string
+	Message      []byte
+}
+
 // RabbitMQInterface 定义RabbitMQ实例的接口
 // 每种RabbitMQ实例都有发布和消费两种功能
 type RabbitMQInterface interface {
-	Publish(message string) (err error)
-	Consume(handler func([]byte) error) (err error)
+	Publish(message string) error
+	Consume(handler MsgHandler) error
 
 	// PublishDelay 延迟队列
 	PublishDelay(message string, ttl string) error
-	ConsumeDelay(handler func([]byte) error) error
+	ConsumeDelay(handler MsgHandler) error
 
 	// ConsumeFailToDlx 消息消费失败进入死信队列
-	ConsumeFailToDlx(handler func([]byte) error) error
-	ConsumeDlx(handler func([]byte) error) error
+	ConsumeFailToDlx(handler MsgHandler) error
+	ConsumeDlx(handler MsgHandler) error
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
@@ -72,7 +84,7 @@ func newRabbitMQ(ctx context.Context, exchangeName, queueName, key, mqUrl string
 	mq = &RabbitMQ{
 		QueueName:    queueName,
 		ExchangeName: exchangeName,
-		Key:          key,
+		Routing:      key,
 		MqURL:        mqUrl,
 		ctx:          ctx,
 	}
@@ -244,65 +256,11 @@ func (r *RabbitMQ) queueDeclare() error {
 func (r *RabbitMQ) queueBind() error {
 	return r.channel.QueueBind(
 		r.QueueName, // 队列名称
-		r.Key,       // 在pub/sub模式下key要为空
+		r.Routing,   // 在pub/sub模式下key要为空
 		r.ExchangeName,
 		false,
 		nil,
 	)
-}
-
-func (r *RabbitMQ) RetryMsg(msg amqp.Delivery, ttl string) error {
-	select {
-	case <-r.ctx.Done():
-		return fmt.Errorf("context cancel publish")
-	default:
-	}
-	// 确认消息监听函数， 启动一个协程，监听消息发送情况
-	r.ListenConfirm()
-
-	// 声明死信交换机
-	dlxName := r.QueueName + "-retry-Ex"
-	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		logger.Info("--DlqConsume DlxDeclare err 1: ", err)
-		return err
-	}
-
-	// 绑定主队列到 exchange 中
-	if err := r.channel.QueueBind(r.QueueName, "#", dlxName, false, nil); err != nil {
-		logger.Info("--DlqConsume QueueBind err: ", err)
-		return err
-	}
-
-	// 声明重试队列
-	retryQueue := r.QueueName + "-retry"
-	if _, err := r.channel.QueueDeclare(
-		retryQueue,
-		true,
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-dead-letter-exchange": dlxName, // 死信交换机
-		},
-	); err != nil {
-		logger.Info("---retry queue err: ", err)
-	}
-	return r.channel.PublishWithContext(
-		r.ctx,
-		r.ExchangeName, // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
-		retryQueue,     // 路由参数， 这里使用队列的名字作为路由参数
-		false,          // 如果为true 会根据exchange类型和routkey规则，如果无法找到符合条件的队列那么会把发送的消息返还给发送者
-		false,          // 如果为true,当exchange发送消息到队列后发现队列上没有绑定消费者则会把消息返还给发送者
-		amqp.Publishing{
-			// 消息内容持久化，这个很关键
-			DeliveryMode: amqp.Persistent,
-			ContentType:  msg.ContentType,
-			Body:         msg.Body,
-			Headers:      msg.Headers,
-			Timestamp:    time.Now(),
-			Expiration:   ttl,
-		})
-
 }
 
 // DlxDeclare 声明死信交换机

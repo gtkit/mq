@@ -28,6 +28,26 @@ func TestDirectDlx(t *testing.T) {
 	exampleDirectDlx()
 }
 
+type DirectFailToDlx struct {
+}
+
+func (m *DirectFailToDlx) Process([]byte, string) error {
+	return nil
+}
+func (m *DirectFailToDlx) Failed(msg rabbit.FailedMsg) {
+
+}
+
+type DirectDlx struct {
+}
+
+func (m *DirectDlx) Process([]byte, string) error {
+	return nil
+}
+func (m *DirectDlx) Failed(msg rabbit.FailedMsg) {
+
+}
+
 func exampleDirectDlx() {
 	var (
 		routingKey = "key.direct.dlx"
@@ -61,7 +81,7 @@ func exampleDirectDlx() {
 
 	// 消费者1
 	go func() {
-		err := rabbitmq1.ConsumeFailToDlx(doConsumeDirectFailToDlx)
+		err := rabbitmq1.ConsumeFailToDlx(&DirectFailToDlx{})
 		if err != nil {
 			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
@@ -71,13 +91,23 @@ func exampleDirectDlx() {
 
 	// 消费者2 死信消费
 	go func() {
-		err := rabbitmq1.ConsumeDlx(doConsumeDirectDlx)
+		err := rabbitmq1.ConsumeDlx(&DirectDlx{})
 		if err != nil {
 			fmt.Println("----ConsumeDlx Consume error: ", err)
 			return
 		}
 	}()
 	select {}
+}
+
+type DirectDelay struct {
+}
+
+func (m *DirectDelay) Process([]byte, string) error {
+	return nil
+}
+func (m *DirectDelay) Failed(msg rabbit.FailedMsg) {
+
 }
 
 func exampleDirectDelay() {
@@ -110,7 +140,7 @@ func exampleDirectDelay() {
 
 	// 消费者1
 	go func() {
-		err := rabbitmq2.ConsumeDelay(doConsumeDirectDelay)
+		err := rabbitmq2.ConsumeDelay(&DirectDelay{})
 		if err != nil {
 			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
@@ -118,6 +148,16 @@ func exampleDirectDelay() {
 
 	}()
 	select {}
+
+}
+
+type Direct struct {
+}
+
+func (m *Direct) Process([]byte, string) error {
+	return nil
+}
+func (m *Direct) Failed(msg rabbit.FailedMsg) {
 
 }
 
@@ -158,7 +198,7 @@ func exampleDirect() {
 	go func() {
 		i := 0
 		for {
-			err := rabbitmq2.Consume(doConsumeDirect)
+			err := rabbitmq2.Consume(&Direct{})
 			if err != nil {
 				fmt.Println("----ConsumeFailToDlx Consume error 1: ", err)
 				// return
