@@ -3,7 +3,6 @@ package test
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strconv"
 	"testing"
@@ -20,30 +19,6 @@ const MQURL = "amqp://xiaozhaofu:123456@10.10.10.44:5672/"
 
 func TestSubMq(t *testing.T) {
 	example3()
-}
-
-type Example31 struct{}
-
-func (m *Example31) Process(msg []byte, msgId string) error {
-	fmt.Println("------------fanout Consume Msg Example31 ----------- : ", string(msg), " -----", msgId)
-	// return nil
-	return errors.New("test retry error")
-
-}
-func (m *Example31) Failed(msg rabbit.FailedMsg) {
-	fmt.Printf("------------failed msg handler Example31----------- :  %s\n", string(msg.Message))
-}
-
-type Example32 struct {
-}
-
-func (m *Example32) Process(msg []byte, msgId string) error {
-	fmt.Println("------------fanout Consume Msg Example32 ----------- : ", string(msg), " -----", msgId)
-	// return nil
-	return errors.New("test retry error")
-}
-func (m *Example32) Failed(msg rabbit.FailedMsg) {
-	fmt.Printf("------------failed msg handler Example32----------- :  %s\n", string(msg.Message))
 }
 
 func example3() {
@@ -68,7 +43,7 @@ func example3() {
 			time.Sleep(1 * time.Second)
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 			if err != nil {
-				fmt.Println("----example3 Publish error:", err)
+				log.Println("----example3 Publish error:", err)
 				return
 			}
 		}
@@ -77,7 +52,7 @@ func example3() {
 	go func() {
 		err := rabbitmq2.Consume(&Example31{})
 		if err != nil {
-			fmt.Println("----example3 Consume error: ", err)
+			log.Println("----example3 Consume error: ", err)
 			return
 		}
 	}()
@@ -85,7 +60,7 @@ func example3() {
 	go func() {
 		err := rabbitmq3.Consume(&Example32{})
 		if err != nil {
-			fmt.Println("----example3 Consume error: ", err)
+			log.Println("----example3 Consume error: ", err)
 			return
 		}
 	}()
@@ -96,26 +71,6 @@ func example3() {
 
 func TestFanoutDlx(t *testing.T) {
 	exampleFanoutDlx()
-}
-
-type FailToDlx struct {
-}
-
-func (m *FailToDlx) Process([]byte, string) error {
-	return nil
-}
-func (m *FailToDlx) Failed(msg rabbit.FailedMsg) {
-
-}
-
-type ConsumeDlx struct {
-}
-
-func (m *ConsumeDlx) Process([]byte, string) error {
-	return nil
-}
-func (m *ConsumeDlx) Failed(msg rabbit.FailedMsg) {
-
 }
 
 func exampleFanoutDlx() {
@@ -140,7 +95,7 @@ func exampleFanoutDlx() {
 			time.Sleep(1 * time.Second)
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 			if err != nil {
-				fmt.Println("----example3 Publish error:", err)
+				log.Println("----example3 Publish error:", err)
 				return
 			}
 		}
@@ -148,18 +103,21 @@ func exampleFanoutDlx() {
 
 	// 消费者1
 	go func() {
+		log.Println("----ConsumeFailToDlx Consume ------")
 		err := rabbitmq2.ConsumeFailToDlx(&FailToDlx{})
 		if err != nil {
-			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
+			log.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
 		}
 	}()
+	time.Sleep(5 * time.Second)
 
 	// 消费者2 死信消费
 	go func() {
+		log.Println("----ConsumeDlx Consume ------: ")
 		err := rabbitmq3.ConsumeDlx(&ConsumeDlx{})
 		if err != nil {
-			fmt.Println("----ConsumeDlx Consume error: ", err)
+			log.Println("----ConsumeDlx Consume error: ", err)
 			return
 		}
 	}()
@@ -168,22 +126,49 @@ func exampleFanoutDlx() {
 	<-forever
 }
 
-func doExample31Msg(msg []byte) error {
-	fmt.Println("-----Example3-1 doConsumeMsg: ", string(msg))
-	return nil
+type Example31 struct{}
+
+func (m *Example31) Process(msg []byte, msgId string) error {
+	log.Println("------------fanout Consume Msg Example31 ----------- : ", string(msg), " -----", msgId)
+	// return nil
+	return errors.New("test retry error")
+
 }
-func doExample32Msg(msg []byte) error {
-	fmt.Println("-----Example3-2 doConsumeMsg: ", string(msg))
-	return nil
+func (m *Example31) Failed(msg rabbit.FailedMsg) {
+	log.Printf("------------failed msg handler Example3:1----------- :  %s\n", string(msg.Message))
 }
 
-func doConsumeFailToDlx(msg []byte) error {
-	fmt.Println("-----doConsumeFailToDlx --Msg: ", string(msg))
-	return nil
-	// return errors.New("...doConsumeFailToDlx error for test...")
+type Example32 struct {
 }
 
-func doConsumeDlx(msg []byte) error {
-	fmt.Println(".....doConsumeDlx ....Msg: ", string(msg))
+func (m *Example32) Process(msg []byte, msgId string) error {
+	log.Println("------------fanout Consume Msg Example3:2 ----------- : ", string(msg), " -----", msgId)
+	// return nil
+	return errors.New("test retry error")
+}
+func (m *Example32) Failed(msg rabbit.FailedMsg) {
+	log.Printf("------------failed msg handler Example32----------- :  %s\n", string(msg.Message))
+}
+
+type FailToDlx struct {
+}
+
+func (m *FailToDlx) Process(msg []byte, msgId string) error {
+	log.Println("------------fanout Consume Msg FailToDlx ----------- : ", string(msg), " -----", msgId)
+	// return nil
+	return errors.New("test retry error")
+}
+func (m *FailToDlx) Failed(msg rabbit.FailedMsg) {
+	log.Printf("------------failed msg handler FailToDlx----------- :  %s\n", string(msg.Message))
+}
+
+type ConsumeDlx struct {
+}
+
+func (m *ConsumeDlx) Process(msg []byte, msgId string) error {
+	log.Println("------------fanout Consume Msg ConsumeDlx ----------- : ", string(msg), " -----", msgId)
 	return nil
+}
+func (m *ConsumeDlx) Failed(msg rabbit.FailedMsg) {
+	log.Printf("------------failed msg handler ConsumeDlx----------- :  %s\n", string(msg.Message))
 }

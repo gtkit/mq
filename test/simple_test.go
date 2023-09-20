@@ -3,7 +3,6 @@ package test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"strconv"
 	"testing"
@@ -20,12 +19,12 @@ type Consumefail struct {
 }
 
 func (m *Consumefail) Process(msg []byte, msgId string) error {
-	fmt.Println("------------Simple Consume Msg ----------- : ", string(msg), " -----", msgId)
+	log.Println("------------Simple Consume Msg ----------- : ", string(msg), " -----", msgId)
 	// return nil
 	return errors.New("test retry error")
 }
 func (m *Consumefail) Failed(msg rabbit.FailedMsg) {
-	fmt.Printf("------------failed msg handler ----------- :  %s\n", string(msg.Message))
+	log.Printf("------------failed msg handler ----------- :  %s\n", string(msg.Message))
 }
 
 func example12() {
@@ -47,7 +46,7 @@ func example12() {
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 
 			if err != nil {
-				fmt.Println("pulish err: ", err)
+				log.Println("pulish err: ", err)
 				return
 			}
 
@@ -60,7 +59,7 @@ func example12() {
 		h = &Consumefail{}
 		err := rabbitmq2.Consume(h)
 		if err != nil {
-			fmt.Println("----Consume error: ", err)
+			log.Println("----Consume error: ", err)
 			return
 		}
 
@@ -77,7 +76,7 @@ func TestSimpleMqDlx(t *testing.T) {
 type SimpleMqDlx struct {
 }
 
-func (m *SimpleMqDlx) Process([]byte, string) error {
+func (m *SimpleMqDlx) Process(msg []byte, msgId string) error {
 	return nil
 }
 func (m *SimpleMqDlx) Failed(msg rabbit.FailedMsg) {
@@ -87,7 +86,7 @@ func (m *SimpleMqDlx) Failed(msg rabbit.FailedMsg) {
 type doDlx struct {
 }
 
-func (m *doDlx) Process([]byte, string) error {
+func (m *doDlx) Process(msg []byte, msgId string) error {
 	return nil
 }
 func (m *doDlx) Failed(msg rabbit.FailedMsg) {
@@ -113,7 +112,7 @@ func example12Dlx() {
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 
 			if err != nil {
-				fmt.Println("pulish err: ", err)
+				log.Println("pulish err: ", err)
 				return
 			}
 
@@ -124,7 +123,7 @@ func example12Dlx() {
 	go func() {
 		err := rabbitmq2.ConsumeFailToDlx(&SimpleMqDlx{})
 		if err != nil {
-			fmt.Println("----Consume error: ", err)
+			log.Println("----Consume error: ", err)
 			return
 		}
 
@@ -134,7 +133,7 @@ func example12Dlx() {
 	go func() {
 		err := rabbitmq2.ConsumeDlx(&doDlx{})
 		if err != nil {
-			fmt.Println("----DlqConsume error: ", err)
+			log.Println("----DlqConsume error: ", err)
 			return
 		}
 		time.Sleep(2 * time.Second)
@@ -153,7 +152,7 @@ func TestSimpleDelay(t *testing.T) {
 type SimpleDelay struct {
 }
 
-func (m *SimpleDelay) Process([]byte, string) error {
+func (m *SimpleDelay) Process(msg []byte, msgId string) error {
 	return nil
 }
 func (m *SimpleDelay) Failed(msg rabbit.FailedMsg) {
@@ -178,7 +177,7 @@ func example12Delay() {
 			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "2000")
 
 			if err != nil {
-				fmt.Println("pulish err: ", err)
+				log.Println("pulish err: ", err)
 				return
 			}
 
@@ -189,7 +188,7 @@ func example12Delay() {
 	go func() {
 		err := rabbitmq2.ConsumeDelay(&SimpleDelay{})
 		if err != nil {
-			fmt.Println("----DlqConsume error: ", err)
+			log.Println("----DlqConsume error: ", err)
 			return
 		}
 		time.Sleep(2 * time.Second)
@@ -198,28 +197,4 @@ func example12Delay() {
 
 	forever := make(chan bool)
 	<-forever
-}
-
-func doConsumeMsg(msg []byte, msgId string) error {
-	fmt.Println("------------Simple Consume Msg ----------- : ", string(msg))
-	// return nil
-	return errors.New("test retry error")
-}
-func doConsumeMsgDlx(msg []byte, msgId string) error {
-	fmt.Println("------------Simple ConsumeMsg dlx error: ", string(msg))
-	// return nil
-	return errors.New("test dlx error")
-}
-func dlxDo(msg []byte, msgId string) error {
-	fmt.Println("------------DLX message: ", string(msg))
-
-	return nil
-}
-func dlxDelay(msg []byte, msgId string) error {
-	fmt.Println("--------------Delay Consume ----------msg----", string(msg), " time: "+time.Now().Format(time.DateTime))
-	return nil
-}
-
-func doFailedMsg(fm rabbit.FailedMsg) {
-	fmt.Printf("---failed msg: %+v\n", fm)
 }

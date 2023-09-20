@@ -3,37 +3,18 @@ package test
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"mq/rabbit"
 )
 
 func TestDealySubMq(t *testing.T) {
 	exampleDelay()
-}
-
-type DelayMsg1 struct {
-}
-
-func (m *DelayMsg1) Process([]byte, string) error {
-	return nil
-}
-func (m *DelayMsg1) Failed(msg rabbit.FailedMsg) {
-
-}
-
-type DelayMsg2 struct {
-}
-
-func (m *DelayMsg2) Process([]byte, string) error {
-	return nil
-}
-func (m *DelayMsg2) Failed(msg rabbit.FailedMsg) {
-
 }
 
 func exampleDelay() {
@@ -56,28 +37,26 @@ func exampleDelay() {
 	go func() {
 		for i := 0; i < 10000; i++ {
 			time.Sleep(1 * time.Second)
-			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "2000")
-			if err != nil {
-				fmt.Println("----PublishDelay error:", err)
+			if err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "2000"); err != nil {
+				log.Println("----PublishDelay error:", err)
 				return
 			}
+			log.Println("--------------Delay Publish ----------msg----", "消息："+strconv.Itoa(i), " time: "+time.Now().Format(time.DateTime))
 		}
 	}()
 
 	// 消费者1
 	go func() {
-		err := rabbitmq2.ConsumeDelay(&DelayMsg1{})
-		if err != nil {
-			fmt.Println("----ConsumeDelay 1 error: ", err)
+		if err := rabbitmq2.ConsumeDelay(&DelayMsg1{}); err != nil {
+			log.Println("----ConsumeDelay 1 error: ", err)
 			return
 		}
 	}()
 
 	// 消费者2
 	go func() {
-		err := rabbitmq3.ConsumeDelay(&DelayMsg2{})
-		if err != nil {
-			fmt.Println("----ConsumeDelay 2 error: ", err)
+		if err := rabbitmq3.ConsumeDelay(&DelayMsg2{}); err != nil {
+			log.Println("----ConsumeDelay 2 error: ", err)
 			return
 		}
 	}()
@@ -86,12 +65,25 @@ func exampleDelay() {
 	<-forever
 }
 
-func doExampleDelayMsg(msg []byte) error {
-	fmt.Println("-----doExampleDelayMsg doConsumeMsg: ", string(msg))
-	return nil
+type DelayMsg1 struct {
 }
 
-func doExampleDelayMsg2(msg []byte) error {
-	fmt.Println("-----doExampleDelayMsg 22 doConsumeMsg: ", string(msg))
+func (m *DelayMsg1) Process(msg []byte, msgId string) error {
+	log.Println("------------fanout Consume Msg delay 1----------- : ", string(msg), " -----time: "+time.Now().Format(time.DateTime))
+	// return nil
+	return errors.New("test failed error")
+}
+func (m *DelayMsg1) Failed(msg rabbit.FailedMsg) {
+	log.Printf("------------failed msg handler delay 1----------- :  %s\n", string(msg.Message))
+}
+
+type DelayMsg2 struct {
+}
+
+func (m *DelayMsg2) Process(msg []byte, msgId string) error {
+	log.Println("------------fanout Consume Msg delay 2----------- : ", string(msg), " -----time: "+time.Now().Format(time.DateTime))
 	return nil
+}
+func (m *DelayMsg2) Failed(msg rabbit.FailedMsg) {
+	log.Printf("------------failed msg handler delay 2----------- :  %s\n", string(msg.Message))
 }

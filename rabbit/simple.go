@@ -98,7 +98,7 @@ func (r *MqSimple) Publish(message string) (err error) {
 }
 
 // Consume 直接模式，消费者
-func (r *MqSimple) Consume(handler MsgHandler) (err error) {
+func (r *MqSimple) Consume(handler MsgHandler) error {
 	// 1 申请队列,如果队列不存在则自动创建,存在则跳过
 	q, err := r.channel.QueueDeclare(
 		r.QueueName,
@@ -128,17 +128,16 @@ func (r *MqSimple) Consume(handler MsgHandler) (err error) {
 		return err
 	}
 	for msg := range deliveries {
-		failedmsg := FailedMsg{
-			ExchangeName: r.ExchangeName,
-			QueueName:    r.QueueName,
-			Routing:      r.Routing,
-			MsgId:        msg.MessageId,
-			Message:      msg.Body,
-		}
 		select {
 		case <-r.Ctx().Done():
 			logger.Info("======ctx done==========")
-			handler.Failed(failedmsg)
+			handler.Failed(FailedMsg{
+				ExchangeName: r.ExchangeName,
+				QueueName:    r.QueueName,
+				Routing:      r.Routing,
+				MsgId:        msg.MessageId,
+				Message:      msg.Body,
+			})
 			if err := msg.Reject(false); err != nil { // 如果要放入死信交换机， Reject 要为false 才行
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("reject error: ", err)
@@ -155,7 +154,13 @@ func (r *MqSimple) Consume(handler MsgHandler) (err error) {
 				}
 				if retry > 3 {
 					// 多次消费失败后要对消息做处理 接插入db日志, db日志可以记录交换机 路由，queuename
-					handler.Failed(failedmsg)
+					handler.Failed(FailedMsg{
+						ExchangeName: r.ExchangeName,
+						QueueName:    r.QueueName,
+						Routing:      r.Routing,
+						MsgId:        msg.MessageId,
+						Message:      msg.Body,
+					})
 					// db create
 					if err = msg.Reject(false); err != nil {
 						// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
@@ -277,16 +282,15 @@ func (r *MqSimple) ConsumeDelay(handler MsgHandler) error {
 		return err
 	}
 	for msg := range deliveries {
-		failedmsg := FailedMsg{
-			ExchangeName: r.ExchangeName,
-			QueueName:    r.QueueName,
-			Routing:      r.Routing,
-			MsgId:        msg.MessageId,
-			Message:      msg.Body,
-		}
 		select {
 		case <-r.Ctx().Done():
-			handler.Failed(failedmsg)
+			handler.Failed(FailedMsg{
+				ExchangeName: r.ExchangeName,
+				QueueName:    r.QueueName,
+				Routing:      r.Routing,
+				MsgId:        msg.MessageId,
+				Message:      msg.Body,
+			})
 			if err := msg.Reject(false); err != nil {
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("reject error: ", err)
@@ -297,7 +301,13 @@ func (r *MqSimple) ConsumeDelay(handler MsgHandler) error {
 		if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 			logger.Info("--DlqConsume handler err: ", err)
 			// 失败处理
-			handler.Failed(failedmsg)
+			handler.Failed(FailedMsg{
+				ExchangeName: r.ExchangeName,
+				QueueName:    r.QueueName,
+				Routing:      r.Routing,
+				MsgId:        msg.MessageId,
+				Message:      msg.Body,
+			})
 			if err = msg.Reject(false); err != nil {
 				logger.Info("reject error: ", err)
 			}
@@ -314,7 +324,7 @@ func (r *MqSimple) ConsumeDelay(handler MsgHandler) error {
 }
 
 // PublishWithDlx 带有死信交换机的发送
-func (r *MqSimple) PublishWithDlx(message string) (err error) {
+func (r *MqSimple) PublishWithDlx(message string) error {
 	select {
 	case <-r.ctx.Done():
 		return fmt.Errorf("context cancel publish")
@@ -330,7 +340,7 @@ func (r *MqSimple) PublishWithDlx(message string) (err error) {
 		return err
 	}
 	// 1.申请队列,如果队列不存在，则会自动创建，如果队列存在则跳过创建直接使用  这样的好处保障队列存在，消息能发送到队列当中
-	_, err = r.channel.QueueDeclare(
+	_, err := r.channel.QueueDeclare(
 		r.QueueName, // 队列名字
 		true,        // 进入的消息是否持久化 进入队列如果不消费那么消息就在队列里面 如果重启服务器那么这个消息就没啦 通常设置为false
 		false,       // 是否为自动删除  意思是最后一个消费者断开链接以后是否将消息从队列当中删除  默认设置为false不自动删除
@@ -391,7 +401,6 @@ func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 			// "x-dead-letter-queue": "dead-letter-queue" + mq.QueueName, // 死信队列
 
 		}, // 额外的属性
-		// nil,
 	)
 	if err != nil {
 		log.Fatal("--Consume QueueDeclare error: ", err)
@@ -415,7 +424,6 @@ func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 	for msg := range deliveries {
 		select {
 		case <-r.Ctx().Done():
-			logger.Info("======ctx done==========")
 			if err := msg.Reject(false); err != nil { // 如果要放入死信交换机， Reject 要为false 才行
 				// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列等措施来处理错误
 				logger.Info("reject error: ", err)
@@ -449,7 +457,7 @@ func (r *MqSimple) ConsumeDlx(handler MsgHandler) error {
 	// 死信交换机
 	dlxName := "dlx-" + r.QueueName
 	if err := r.DlxDeclare(dlxName, "fanout"); err != nil {
-		log.Fatal("--DlqConsume DlxDeclare err: ", err)
+		logger.Info("--DlqConsume DlxDeclare err: ", err)
 		return err
 	}
 

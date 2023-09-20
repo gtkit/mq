@@ -4,7 +4,6 @@ package test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"strconv"
 	"testing"
@@ -31,7 +30,7 @@ func TestDirectDlx(t *testing.T) {
 type DirectFailToDlx struct {
 }
 
-func (m *DirectFailToDlx) Process([]byte, string) error {
+func (m *DirectFailToDlx) Process(msg []byte, msgId string) error {
 	return nil
 }
 func (m *DirectFailToDlx) Failed(msg rabbit.FailedMsg) {
@@ -41,7 +40,7 @@ func (m *DirectFailToDlx) Failed(msg rabbit.FailedMsg) {
 type DirectDlx struct {
 }
 
-func (m *DirectDlx) Process([]byte, string) error {
+func (m *DirectDlx) Process(msg []byte, msgId string) error {
 	return nil
 }
 func (m *DirectDlx) Failed(msg rabbit.FailedMsg) {
@@ -72,10 +71,10 @@ func exampleDirectDlx() {
 			msg := "消息：" + strconv.Itoa(i)
 			err := rabbitmq1.Publish(msg)
 			if err != nil {
-				fmt.Println("----direct.dlx Publish error:", err)
+				log.Println("----direct.dlx Publish error:", err)
 				return
 			}
-			fmt.Println("----Publish Dlx success: ", msg, " ----", time.Now().Format(time.DateTime))
+			log.Println("----Publish Dlx success: ", msg, " ----", time.Now().Format(time.DateTime))
 		}
 	}()
 
@@ -83,7 +82,7 @@ func exampleDirectDlx() {
 	go func() {
 		err := rabbitmq1.ConsumeFailToDlx(&DirectFailToDlx{})
 		if err != nil {
-			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
+			log.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
 		}
 
@@ -93,7 +92,7 @@ func exampleDirectDlx() {
 	go func() {
 		err := rabbitmq1.ConsumeDlx(&DirectDlx{})
 		if err != nil {
-			fmt.Println("----ConsumeDlx Consume error: ", err)
+			log.Println("----ConsumeDlx Consume error: ", err)
 			return
 		}
 	}()
@@ -103,7 +102,7 @@ func exampleDirectDlx() {
 type DirectDelay struct {
 }
 
-func (m *DirectDelay) Process([]byte, string) error {
+func (m *DirectDelay) Process(msg []byte, msgId string) error {
 	return nil
 }
 func (m *DirectDelay) Failed(msg rabbit.FailedMsg) {
@@ -131,10 +130,10 @@ func exampleDirectDelay() {
 			msg := "消息：" + strconv.Itoa(i)
 			err := rabbitmq1.PublishDelay(msg, "2000")
 			if err != nil {
-				fmt.Println("----example3 Publish error:", err)
+				log.Println("----example3 Publish error:", err)
 				return
 			}
-			fmt.Println("----PublishDelay success: ", msg, " ----", time.Now().Format(time.DateTime))
+			log.Println("----PublishDelay success: ", msg, " ----", time.Now().Format(time.DateTime))
 		}
 	}()
 
@@ -142,7 +141,7 @@ func exampleDirectDelay() {
 	go func() {
 		err := rabbitmq2.ConsumeDelay(&DirectDelay{})
 		if err != nil {
-			fmt.Println("----ConsumeFailToDlx Consume error: ", err)
+			log.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
 		}
 
@@ -154,25 +153,28 @@ func exampleDirectDelay() {
 type Direct struct {
 }
 
-func (m *Direct) Process([]byte, string) error {
-	return nil
+func (m *Direct) Process(msg []byte, msgId string) error {
+	log.Println("------------Simple Consume Msg ----------- : ", string(msg), " -----", msgId)
+	// return nil
+	return errors.New("test retry error")
 }
 func (m *Direct) Failed(msg rabbit.FailedMsg) {
-
+	log.Printf("------------failed msg handler ----------- :  %s\n", string(msg.Message))
 }
 
 func exampleDirect() {
 	var (
-		routingKey = "my_direct_routingKey"
-		queueName  = "my_direct_queue"
+		routingKey   = "my_direct_routingKey"
+		queueName    = "my_direct_queue"
+		exchangeName = "exchange_direct"
 		// queueName = ""
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), "exchange.direct", queueName, routingKey, MQURL)
+	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), exchangeName, queueName, routingKey, MQURL)
 	defer rabbitmq1.Destroy()
 	if err1 != nil {
 		log.Println("rabbitmq1-----", err1)
 	}
-	rabbitmq2, err2 := rabbit.NewMQDirect(context.Background(), "exchange.direct", queueName, routingKey, MQURL)
+	rabbitmq2, err2 := rabbit.NewMQDirect(context.Background(), exchangeName, queueName, routingKey, MQURL)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println("rabbitmq2----", err2)
@@ -182,13 +184,10 @@ func exampleDirect() {
 			time.Sleep(1 * time.Second)
 			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
 			if err != nil {
-				fmt.Println("-----------------example Publish error:", err)
+				log.Println("-----------------example Publish error:", err)
 				time.Sleep(3 * time.Second)
 				// return
-				fmt.Println("******** do Publish Direct Msg failed: ", "消息："+strconv.Itoa(i))
-			}
-			if err == nil {
-				fmt.Println("======= do Publish Direct Msg: ", "消息："+strconv.Itoa(i))
+				log.Println("******** do Publish Direct Msg failed: ", "消息："+strconv.Itoa(i))
 			}
 
 		}
@@ -196,26 +195,16 @@ func exampleDirect() {
 	//
 	// 消费者1
 	go func() {
-		i := 0
-		for {
-			err := rabbitmq2.Consume(&Direct{})
-			if err != nil {
-				fmt.Println("----ConsumeFailToDlx Consume error 1: ", err)
-				// return
-			}
-			time.Sleep(2 * time.Second)
-			i++
-			if i > 10 {
-				// 发送飞书报警
-				break
-			}
-			fmt.Println("consume----", i)
+		err := rabbitmq2.Consume(&Direct{})
+		if err != nil {
+			log.Println("----ConsumeFailToDlx Consume error 1: ", err)
+			// return
 		}
 	}()
 	// go func() {
 	// 	err := rabbitmq2.Consume(doConsumeDirect2)
 	// 	if err != nil {
-	// 		fmt.Println("----ConsumeFailToDlx Consume error 2: ", err)
+	// 		log.Println("----ConsumeFailToDlx Consume error 2: ", err)
 	// 		// return
 	// 		time.Sleep(5 * time.Second)
 	// 		rabbitmq2.Consume(doConsumeDirect2)
@@ -223,29 +212,4 @@ func exampleDirect() {
 	// }()
 
 	select {}
-}
-
-func doConsumeDirect(msg []byte) error {
-	fmt.Println(".....doConsume Direct ....Msg: ", string(msg))
-	return nil
-}
-func doConsumeDirect2(msg []byte) error {
-	fmt.Println(".....doConsume Direct ....Msg 2: ", string(msg))
-	return nil
-}
-
-func doConsumeDirectDelay(msg []byte) error {
-	fmt.Println("----ConsumeDelay success: ", string(msg), " ----", time.Now().Format(time.DateTime))
-	return nil
-}
-
-func doConsumeDirectDlx(msg []byte) error {
-	fmt.Println("----Consume Direct FailToDlx success: ", string(msg), " ----", time.Now().Format(time.DateTime))
-	return nil
-}
-
-func doConsumeDirectFailToDlx(msg []byte) error {
-	fmt.Println("-----doConsumeFailToDlx --Msg: ", string(msg))
-	// return nil
-	return errors.New("...doConsumeFailToDlx error for test...")
 }

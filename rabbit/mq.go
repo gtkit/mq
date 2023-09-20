@@ -3,7 +3,7 @@ package rabbit
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -206,10 +206,10 @@ func (r *RabbitMQ) ListenConfirm() {
 	go func() {
 		for c := range r.notifyConfirm {
 			if c.Ack {
-				fmt.Println("confirm:消息发送成功")
+				log.Println("confirm:消息发送成功")
 			} else {
 				// 这里表示消息发送到mq失败,可以处理失败流程
-				fmt.Println("confirm:消息发送失败")
+				log.Println("confirm:消息发送失败")
 			}
 		}
 	}()
@@ -282,7 +282,7 @@ func (r *RabbitMQ) DlxDeclare(dlxExchange, routingKind string) error {
 func setupCloseHandler(exitCh chan struct{}) {
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	fmt.Println("---- signal.Notify begin----")
+	log.Println("---- signal.Notify begin----")
 	go func() {
 		<-c
 		logger.Infof("close handler: Ctrl+C pressed in Terminal")
