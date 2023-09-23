@@ -1,7 +1,6 @@
 package rabbit
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -15,42 +14,76 @@ type MqDirect struct {
 	*RabbitMQ
 }
 
-// NewMQDirect 获取路由模式下的rabbitmq的实例.
-func NewMQDirect(ctx context.Context, exchangeName, queueName, routingKey, mqUrl string) (*MqDirect, error) {
+// NewPubDirect 获取路由模式下的rabbitmq的实例.
+func NewPubDirect(option MQOption) (rabbitMQSimple *MqSimple, err error) {
 	// 判断是否输入必要的信息
-	if exchangeName == "" || routingKey == "" || mqUrl == "" {
+	if option.ExchangeName == "" || option.Routing == "" || option.MqURL == "" {
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
 	}
-	rabbitmq, err := newRabbitMQ(ctx, exchangeName, queueName, routingKey, mqUrl)
+	rabbitmq, err := newRabbitMQ(option)
 	if err != nil {
 		return nil, err
 	}
-	return &MqDirect{
+
+	if err = rabbitmq.SetConfirm(); err != nil {
+		return nil, err
+	}
+
+	return &MqSimple{
+		rabbitmq,
+	}, nil
+}
+
+func NewConsumeDirect(option MQOption) (rabbitMQSimple *MqSimple, err error) {
+	// 判断是否输入必要的信息
+	if option.ExchangeName == "" || option.Routing == "" || option.MqURL == "" {
+		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
+	}
+
+	rabbitmq, err := newRabbitMQ(option)
+	if err != nil {
+		return nil, err
+	}
+
+	rabbitmq.NotifyConnectionClose()
+	rabbitmq.NotifyChannelClose()
+
+	return &MqSimple{
 		rabbitmq,
 	}, nil
 }
 
 // Publish 路由模式发送信息.
-func (r *MqDirect) Publish(message string) (err error) {
+func (r *MqDirect) Publish(message string, handler MsgHandler) error {
 	select {
-	case <-r.ctx.Done():
-		r.Destroy()
-		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
+	case <-r.Ctx.Done():
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        "",
+			Message:      []byte(message),
+		})
+		return fmt.Errorf("context cancel publish" + r.Ctx.Err().Error())
 	default:
 	}
 
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
-	r.ListenConfirm()
+	var (
+		ack  = make(chan uint64)
+		nack = make(chan uint64)
+	)
+	r.NotifyConfirm(ack, nack)
 
 	// 1 尝试创建交换机，不存在创建
-	if err = r.exchangeDeclare(); err != nil {
+	if err := r.exchangeDeclare(); err != nil {
 		return err
 	}
 
 	// 2 发送信息
 	msgId := uuid.New().String()
-	return r.channel.PublishWithContext(
-		r.ctx,
+	if err := r.channel.PublishWithContext(
+		r.Ctx,
 		r.ExchangeName,
 		// Binding Key
 		r.Routing,
@@ -67,7 +100,31 @@ func (r *MqDirect) Publish(message string) (err error) {
 			Headers: amqp.Table{
 				"x-retry": 0,
 			},
+		}); err != nil {
+		return err
+	}
+	select {
+	case a := <-ack:
+		logger.Info("------------ publish success ---------", a, " ===", message)
+		return nil
+	case n := <-nack:
+		logger.Info("------------ publish failed----------", n, " ===", message)
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msgId,
+			Message:      []byte(message),
 		})
+		return errors.New("**** publish failed *****")
+	case notify := <-r.channel.NotifyReturn(make(chan amqp.Return)):
+		if notify.ReplyCode == amqp.NoRoute {
+			return errors.New("**** no amqp route *****")
+		}
+		logger.Info("----- notify return ----", string(notify.Body))
+
+	}
+	return nil
 }
 
 // Consume 路由模式接收信息
@@ -102,9 +159,26 @@ func (r *MqDirect) Consume(handler MsgHandler) error {
 		return errors.WithMessage(err, "----- r.channel.Consume error:")
 	}
 
+	// 监听连接断开时自动重连
+	go func() {
+		for {
+			select {
+			case <-r.conn.NotifyClose(make(chan *amqp.Error)):
+				time.Sleep(1 * time.Second)
+				_ = r.Consume(handler)
+			case <-r.Ctx.Done():
+				return
+			}
+		}
+	}()
+
 	for msg := range deliveries {
+		if msg.Body == nil {
+			logger.Info("----读取不到信息----")
+			return errors.New("----读取不到信息----")
+		}
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			go handler.Failed(FailedMsg{
 				ExchangeName: r.ExchangeName,
@@ -165,7 +239,7 @@ func (r *MqDirect) Consume(handler MsgHandler) error {
 
 func (r *MqDirect) RetryMsg(msg amqp.Delivery, ttl string) error {
 	select {
-	case <-r.ctx.Done():
+	case <-r.Ctx.Done():
 		return fmt.Errorf("context cancel publish")
 	default:
 	}
@@ -189,7 +263,7 @@ func (r *MqDirect) RetryMsg(msg amqp.Delivery, ttl string) error {
 	}
 
 	return r.channel.PublishWithContext(
-		r.ctx,
+		r.Ctx,
 		"",         // 交换机名称，simple模式下默认为空 我们在上边已经赋值为空了  虽然为空 但其实也是在用的rabbitmq当中的default交换机运行
 		retryQueue, // 路由参数， 这里使用队列的名字作为路由参数
 		false,      // 如果为true 会根据exchange类型和routkey规则，如果无法找到符合条件的队列那么会把发送的消息返还给发送者
@@ -208,17 +282,27 @@ func (r *MqDirect) RetryMsg(msg amqp.Delivery, ttl string) error {
 }
 
 // PublishDelay 发布延迟队列.
-func (r *MqDirect) PublishDelay(message string, ttl string) error {
+func (r *MqDirect) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	select {
-	case <-r.ctx.Done():
+	case <-r.Ctx.Done():
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        "",
+			Message:      []byte(message),
+		})
 		r.Destroy()
-		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
+		return fmt.Errorf("context cancel publish" + r.Ctx.Err().Error())
 	default:
 	}
 
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
-	r.ListenConfirm()
-
+	var (
+		ack  = make(chan uint64)
+		nack = make(chan uint64)
+	)
+	r.NotifyConfirm(ack, nack)
 	// 1 延迟交换机
 	if err := r.delayExchange(); err != nil {
 		return err
@@ -226,8 +310,8 @@ func (r *MqDirect) PublishDelay(message string, ttl string) error {
 
 	msgId := uuid.New().String()
 	// 2 发送消息
-	return r.RabbitMQ.channel.PublishWithContext(
-		r.ctx,
+	if err := r.RabbitMQ.channel.PublishWithContext(
+		r.Ctx,
 		r.ExchangeName, // 交换机名称
 		r.Routing,      // 路由参数，fanout类型交换机，自动忽略路由参数
 		false,
@@ -241,7 +325,31 @@ func (r *MqDirect) PublishDelay(message string, ttl string) error {
 			Headers: amqp.Table{
 				"x-delay": ttl,
 			},
+		}); err != nil {
+		return err
+	}
+	select {
+	case a := <-ack:
+		logger.Info("------------ publish success ---------", a, " ===", message)
+		return nil
+	case n := <-nack:
+		logger.Info("------------ publish failed----------", n, " ===", message)
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msgId,
+			Message:      []byte(message),
 		})
+		return errors.New("**** publish failed *****")
+	case notify := <-r.channel.NotifyReturn(make(chan amqp.Return)):
+		if notify.ReplyCode == amqp.NoRoute {
+			return errors.New("**** no amqp route *****")
+		}
+		logger.Info("----- notify return ----", string(notify.Body))
+
+	}
+	return nil
 }
 
 // ConsumeDelay 消费延迟队列
@@ -270,7 +378,7 @@ func (r *MqDirect) ConsumeDelay(handler MsgHandler) error {
 	}
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done():
+		case <-r.Ctx.Done():
 			go handler.Failed(FailedMsg{
 				ExchangeName: r.ExchangeName,
 				QueueName:    r.QueueName,
@@ -346,7 +454,7 @@ func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列(死信队列)等措施来处理错误
 			if err := msg.Reject(false); err != nil { // false 表示不重新放回队列
@@ -428,7 +536,7 @@ func (r *MqDirect) ConsumeDlx(handler MsgHandler) error {
 
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			go handler.Failed(FailedMsg{
 				ExchangeName: r.ExchangeName,
@@ -479,7 +587,7 @@ func (r *MqDirect) exchangeDeclare() error {
 		// 交换机名称
 		r.ExchangeName,
 		// 交换机类型 广播类型
-		"direct",
+		amqp.ExchangeDirect,
 		// 是否持久化
 		true,
 		// 是否自动删除
@@ -517,7 +625,7 @@ func (r *MqDirect) dlxExchange() error {
 	// 死信交换机
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName+".dlx", // 死信交换机名字
-		"direct",              // 死信交换机类型
+		amqp.ExchangeDirect,   // 死信交换机类型
 		true,                  // 是否持久化
 		false,
 		false,
@@ -536,7 +644,7 @@ func (r *MqDirect) delayExchange() error {
 		false,
 		false,
 		amqp.Table{
-			"x-delayed-type": "direct",
+			"x-delayed-type": amqp.ExchangeDirect,
 		},
 	)
 }

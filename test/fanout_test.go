@@ -22,17 +22,26 @@ func TestSubMq(t *testing.T) {
 }
 
 func example3() {
-	rabbitmq1, err1 := rabbit.NewMQFanout(context.Background(), "exchange.example3", MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQFanout(context.Background(), "exchange.example3", MQURL)
+	rabbitmq2, err2 := rabbit.NewConsumeFanout(rabbit.MQOption{
+		ExchangeName: "exchange.example3",
+		QueueName:    "",
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewMQFanout(context.Background(), "exchange.example3", MQURL)
+	rabbitmq3, err3 := rabbit.NewConsumeFanout(rabbit.MQOption{
+		ExchangeName: "exchange.example3",
+		QueueName:    "",
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)
@@ -40,12 +49,23 @@ func example3() {
 
 	go func() {
 		for i := 0; i < 1000; i++ {
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubFanout(rabbit.MQOption{
+				ExchangeName: "exchange.delay",
+				QueueName:    "",
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
 			time.Sleep(1 * time.Second)
-			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &Example31{})
 			if err != nil {
 				log.Println("----example3 Publish error:", err)
-				return
+
 			}
+			cancel()
+			rabbitmq1.Destroy()
 		}
 	}()
 
@@ -74,17 +94,27 @@ func TestFanoutDlx(t *testing.T) {
 }
 
 func exampleFanoutDlx() {
-	rabbitmq1, err1 := rabbit.NewMQFanout(context.Background(), "exchange.example3", MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQFanout(context.Background(), "exchange.example3", MQURL)
+
+	rabbitmq2, err2 := rabbit.NewConsumeFanout(rabbit.MQOption{
+		ExchangeName: "exchange.example3",
+		QueueName:    "",
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewMQFanout(context.Background(), "exchange.example3", MQURL)
+	rabbitmq3, err3 := rabbit.NewConsumeFanout(rabbit.MQOption{
+		ExchangeName: "exchange.example3",
+		QueueName:    "",
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)
@@ -93,11 +123,22 @@ func exampleFanoutDlx() {
 	go func() {
 		for i := 0; i < 10000; i++ {
 			time.Sleep(1 * time.Second)
-			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubFanout(rabbit.MQOption{
+				ExchangeName: "exchange.delay",
+				QueueName:    "",
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
+			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &FailToDlx{})
 			if err != nil {
 				log.Println("----example3 Publish error:", err)
 				return
 			}
+			cancel()
+			rabbitmq1.Destroy()
 		}
 	}()
 

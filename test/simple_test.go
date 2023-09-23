@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"errors"
 	"log"
 	"strconv"
 	"testing"
@@ -15,13 +14,12 @@ func TestSimpleMq(t *testing.T) {
 	example12()
 }
 
-type Consumefail struct {
-}
+type Consumefail struct{}
 
 func (m *Consumefail) Process(msg []byte, msgId string) error {
 	log.Println("------------Simple Consume Msg ----------- : ", string(msg), " -----", msgId)
-	// return nil
-	return errors.New("test retry error")
+	return nil
+	// return errors.New("test retry error")
 }
 func (m *Consumefail) Failed(msg rabbit.FailedMsg) {
 	log.Printf("------------failed msg handler ----------- :  %s\n", string(msg.Message))
@@ -29,12 +27,14 @@ func (m *Consumefail) Failed(msg rabbit.FailedMsg) {
 
 func example12() {
 	var queueName = "queue-simple"
-	rabbitmq1, err1 := rabbit.NewMQSimple(context.Background(), queueName, MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQSimple(context.Background(), queueName, MQURL)
+	rabbitmq2, err2 := rabbit.NewConsumeSimple(rabbit.MQOption{
+		ExchangeName: "",
+		QueueName:    queueName,
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "123",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -42,22 +42,30 @@ func example12() {
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			time.Sleep(2 * time.Second)
-			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
+				ExchangeName: "",
+				QueueName:    queueName,
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "121",
+				Ctx:          ctx,
+			})
 
+			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &Consumefail{})
 			if err != nil {
 				log.Println("pulish err: ", err)
-				return
+				// return
 			}
-
+			time.Sleep(2 * time.Second)
+			cancel()
+			rabbitmq1.Destroy()
 		}
 	}()
 
 	// simple 消费
 	go func() {
-		var h rabbit.MsgHandler
-		h = &Consumefail{}
-		err := rabbitmq2.Consume(h)
+		err := rabbitmq2.Consume(&Consumefail{})
 		if err != nil {
 			log.Println("----Consume error: ", err)
 			return
@@ -95,12 +103,14 @@ func (m *doDlx) Failed(msg rabbit.FailedMsg) {
 func example12Dlx() {
 	var queueName = "queue3-dlx"
 
-	rabbitmq1, err1 := rabbit.NewMQSimple(context.Background(), queueName, MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQSimple(context.Background(), queueName, MQURL)
+	rabbitmq2, err2 := rabbit.NewConsumeSimple(rabbit.MQOption{
+		ExchangeName: "",
+		QueueName:    queueName,
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -109,12 +119,22 @@ func example12Dlx() {
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(2 * time.Second)
-			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
+				ExchangeName: "",
+				QueueName:    queueName,
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
+			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &SimpleMqDlx{})
 
 			if err != nil {
 				log.Println("pulish err: ", err)
-				return
 			}
+			cancel()
+			rabbitmq1.Destroy()
 
 		}
 	}()
@@ -160,12 +180,14 @@ func (m *SimpleDelay) Failed(msg rabbit.FailedMsg) {
 }
 func example12Delay() {
 	var queueName = "delay-queue"
-	rabbitmq1, err1 := rabbit.NewMQSimple(context.Background(), queueName, MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQSimple(context.Background(), queueName, MQURL)
+	rabbitmq2, err2 := rabbit.NewConsumeSimple(rabbit.MQOption{
+		ExchangeName: "",
+		QueueName:    queueName,
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -174,12 +196,23 @@ func example12Delay() {
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
-			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "2000")
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
+				ExchangeName: "",
+				QueueName:    queueName,
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
+
+			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), &SimpleDelay{}, "2000")
 
 			if err != nil {
 				log.Println("pulish err: ", err)
-				return
 			}
+			cancel()
+			rabbitmq1.Destroy()
 
 		}
 	}()

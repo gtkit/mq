@@ -3,7 +3,7 @@ package test
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"testing"
@@ -54,33 +54,47 @@ func exampleDirectDlx() {
 		// queueName  = "queue.direct"
 		queueName = ""
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), exchange, queueName, routingKey, MQURL)
-	defer rabbitmq1.Destroy()
+	rabbitmq2, err1 := rabbit.NewConsumeDirect(rabbit.MQOption{
+		ExchangeName: exchange,
+		QueueName:    queueName,
+		Routing:      routingKey,
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
+	defer rabbitmq2.Destroy()
 	if err1 != nil {
 		log.Println(err1)
 	}
 
-	// rabbitmq2, err2 := rabbit.NewRabbitMQDirect(exchange, routingKey, MQURL)
-	// defer rabbitmq2.Destroy()
-	// if err2 != nil {
-	// 	log.Println(err2)
-	// }
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubDirect(rabbit.MQOption{
+				ExchangeName: "exchange.delay",
+				QueueName:    "",
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
+
 			msg := "消息：" + strconv.Itoa(i)
-			err := rabbitmq1.Publish(msg)
+			err := rabbitmq1.Publish(msg, &DirectFailToDlx{})
 			if err != nil {
 				log.Println("----direct.dlx Publish error:", err)
-				return
+
 			}
 			log.Println("----Publish Dlx success: ", msg, " ----", time.Now().Format(time.DateTime))
+			cancel()
+			rabbitmq1.Destroy()
 		}
 	}()
 
 	// 消费者1
 	go func() {
-		err := rabbitmq1.ConsumeFailToDlx(&DirectFailToDlx{})
+		err := rabbitmq2.ConsumeFailToDlx(&DirectFailToDlx{})
 		if err != nil {
 			log.Println("----ConsumeFailToDlx Consume error: ", err)
 			return
@@ -90,7 +104,7 @@ func exampleDirectDlx() {
 
 	// 消费者2 死信消费
 	go func() {
-		err := rabbitmq1.ConsumeDlx(&DirectDlx{})
+		err := rabbitmq2.ConsumeDlx(&DirectDlx{})
 		if err != nil {
 			log.Println("----ConsumeDlx Consume error: ", err)
 			return
@@ -114,12 +128,15 @@ func exampleDirectDelay() {
 		routingKey = "key.direct.delay"
 		exchange   = "exchange.direct.delay"
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), exchange, "", routingKey, MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQDirect(context.Background(), exchange, "", routingKey, MQURL)
+
+	rabbitmq2, err2 := rabbit.NewConsumeDirect(rabbit.MQOption{
+		ExchangeName: exchange,
+		QueueName:    "",
+		Routing:      routingKey,
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -127,13 +144,24 @@ func exampleDirectDelay() {
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubDirect(rabbit.MQOption{
+				ExchangeName: exchange,
+				QueueName:    "",
+				Routing:      routingKey,
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
 			msg := "消息：" + strconv.Itoa(i)
-			err := rabbitmq1.PublishDelay(msg, "2000")
+			err := rabbitmq1.PublishDelay(msg, &DirectDelay{}, "2000")
 			if err != nil {
 				log.Println("----example3 Publish error:", err)
 				return
 			}
 			log.Println("----PublishDelay success: ", msg, " ----", time.Now().Format(time.DateTime))
+			cancel()
+			rabbitmq1.Destroy()
 		}
 	}()
 
@@ -154,12 +182,12 @@ type Direct struct {
 }
 
 func (m *Direct) Process(msg []byte, msgId string) error {
-	log.Println("------------Simple Consume Msg ----------- : ", string(msg), " -----", msgId)
-	// return nil
-	return errors.New("test retry error")
+	log.Println("------------Direct Consume Msg ----------- : ", string(msg), " -----", msgId)
+	return nil
+	// return errors.New("test retry error")
 }
 func (m *Direct) Failed(msg rabbit.FailedMsg) {
-	log.Printf("------------failed msg handler ----------- :  %s\n", string(msg.Message))
+	log.Printf("------------Direct failed msg handler ----------- :  %s\n", string(msg.Message))
 }
 
 func exampleDirect() {
@@ -169,12 +197,15 @@ func exampleDirect() {
 		exchangeName = "exchange_direct"
 		// queueName = ""
 	)
-	rabbitmq1, err1 := rabbit.NewMQDirect(context.Background(), exchangeName, queueName, routingKey, MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println("rabbitmq1-----", err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQDirect(context.Background(), exchangeName, queueName, routingKey, MQURL)
+
+	rabbitmq2, err2 := rabbit.NewConsumeDirect(rabbit.MQOption{
+		ExchangeName: exchangeName,
+		QueueName:    queueName,
+		Routing:      routingKey,
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println("rabbitmq2----", err2)
@@ -182,34 +213,39 @@ func exampleDirect() {
 	go func() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
-			err := rabbitmq1.Publish("消息：" + strconv.Itoa(i))
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubDirect(rabbit.MQOption{
+				ExchangeName: "exchange.delay",
+				QueueName:    "",
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
+			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &Direct{})
 			if err != nil {
 				log.Println("-----------------example Publish error:", err)
 				time.Sleep(3 * time.Second)
 				// return
 				log.Println("******** do Publish Direct Msg failed: ", "消息："+strconv.Itoa(i))
 			}
+			cancel()
+			rabbitmq1.Destroy()
 
 		}
 	}()
 	//
-	// 消费者1
 	go func() {
+		// for i := 0; i < 5; i++ {
 		err := rabbitmq2.Consume(&Direct{})
 		if err != nil {
-			log.Println("----ConsumeFailToDlx Consume error 1: ", err)
+			fmt.Println("----ConsumeFailToDlx Consume error 1: ", err)
 			// return
 		}
+		// time.Sleep(2 * time.Second)
+		// fmt.Println("consume----", i)
+		// }
 	}()
-	// go func() {
-	// 	err := rabbitmq2.Consume(doConsumeDirect2)
-	// 	if err != nil {
-	// 		log.Println("----ConsumeFailToDlx Consume error 2: ", err)
-	// 		// return
-	// 		time.Sleep(5 * time.Second)
-	// 		rabbitmq2.Consume(doConsumeDirect2)
-	// 	}
-	// }()
 
 	select {}
 }

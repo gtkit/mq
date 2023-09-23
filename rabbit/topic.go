@@ -22,8 +22,18 @@ func NewMQTopic(ctx context.Context, exchangeName, routingKey, mqUrl string) (ra
 	if exchangeName == "" || routingKey == "" || mqUrl == "" {
 		return nil, errors.New("ExchangeName, routingKey and mqUrl is required")
 	}
-	rabbitmq, err := newRabbitMQ(ctx, exchangeName, "", routingKey, mqUrl)
+	rabbitmq, err := newRabbitMQ(MQOption{
+		ExchangeName: exchangeName,
+		QueueName:    "",
+		Routing:      routingKey,
+		MqURL:        mqUrl,
+		Ctx:          ctx,
+	})
+
 	if err != nil {
+		return nil, err
+	}
+	if err = rabbitmq.SetConfirm(); err != nil {
 		return nil, err
 	}
 	return &MqTopic{
@@ -32,10 +42,10 @@ func NewMQTopic(ctx context.Context, exchangeName, routingKey, mqUrl string) (ra
 }
 
 // Publish topic模式。生产者。
-func (r *MqTopic) Publish(message string) error {
+func (r *MqTopic) Publish(message string, handler MsgHandler) error {
 	select {
-	case <-r.ctx.Done():
-		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
+	case <-r.Ctx.Done():
+		return fmt.Errorf("context cancel publish" + r.Ctx.Err().Error())
 	default:
 	}
 
@@ -49,7 +59,7 @@ func (r *MqTopic) Publish(message string) error {
 
 	// 2 发送消息。
 	return r.channel.PublishWithContext(
-		r.ctx,
+		r.Ctx,
 		r.ExchangeName,
 		r.Routing,
 		false,
@@ -99,7 +109,7 @@ func (r *MqTopic) Consume(handler MsgHandler) error {
 	}
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列(死信队列)等措施来处理错误
 			if err := msg.Reject(true); err != nil {

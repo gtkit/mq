@@ -18,17 +18,27 @@ func TestDealySubMq(t *testing.T) {
 }
 
 func exampleDelay() {
-	rabbitmq1, err1 := rabbit.NewMQFanout(context.Background(), "exchange.delay", MQURL)
-	defer rabbitmq1.Destroy()
-	if err1 != nil {
-		log.Println(err1)
-	}
-	rabbitmq2, err2 := rabbit.NewMQFanout(context.Background(), "exchange.delay", MQURL)
+
+	rabbitmq2, err2 := rabbit.NewConsumeFanout(rabbit.MQOption{
+		ExchangeName: "exchange.delay",
+		QueueName:    "",
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
 	}
-	rabbitmq3, err3 := rabbit.NewMQFanout(context.Background(), "exchange.delay", MQURL)
+	rabbitmq3, err3 := rabbit.NewConsumeFanout(rabbit.MQOption{
+		ExchangeName: "exchange.delay",
+		QueueName:    "",
+		Routing:      "",
+		MqURL:        MQURL,
+		ConnName:     "",
+		Ctx:          context.Background(),
+	})
 	defer rabbitmq3.Destroy()
 	if err3 != nil {
 		log.Println(err3)
@@ -37,11 +47,22 @@ func exampleDelay() {
 	go func() {
 		for i := 0; i < 10000; i++ {
 			time.Sleep(1 * time.Second)
-			if err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), "2000"); err != nil {
+			ctx, cancel := context.WithCancel(context.Background())
+			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
+				ExchangeName: "exchange.delay",
+				QueueName:    "",
+				Routing:      "",
+				MqURL:        MQURL,
+				ConnName:     "",
+				Ctx:          ctx,
+			})
+			if err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), &DelayMsg1{}, "2000"); err != nil {
 				log.Println("----PublishDelay error:", err)
-				return
+
 			}
 			log.Println("--------------Delay Publish ----------msg----", "消息："+strconv.Itoa(i), " time: "+time.Now().Format(time.DateTime))
+			cancel()
+			rabbitmq1.Destroy()
 		}
 	}()
 

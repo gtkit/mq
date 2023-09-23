@@ -1,7 +1,6 @@
 package rabbit
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -20,36 +19,68 @@ type MqFanout struct {
 	*RabbitMQ
 }
 
-// NewMQFanout 获取订阅模式下的rabbitmq的实例
-func NewMQFanout(ctx context.Context, exchangeName, mqUrl string) (rabbitMqFanout *MqFanout, err error) {
+// NewPubFanout 获取订阅模式下的rabbitmq的实例
+func NewPubFanout(option MQOption) (rabbitMQSimple *MqSimple, err error) {
 	// 判断是否输入必要的信息
-	if exchangeName == "" || mqUrl == "" {
-		return nil, errors.New("ExchangeName and mqUrl is required")
+	if option.ExchangeName == "" || option.MqURL == "" {
+		logger.Infof("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", "", "")
+		return nil, errors.New("QueueName and mqUrl is required")
 	}
-	// 创建rabbitmq实例
-	rabbitmq, err := newRabbitMQ(ctx, exchangeName, "", "", mqUrl)
+	rabbitmq, err := newRabbitMQ(option)
 	if err != nil {
 		return nil, err
 	}
+
 	if err = rabbitmq.SetConfirm(); err != nil {
 		return nil, err
 	}
 
-	return &MqFanout{
+	return &MqSimple{
+		rabbitmq,
+	}, nil
+}
+
+func NewConsumeFanout(option MQOption) (rabbitMQSimple *MqSimple, err error) {
+	// 判断是否输入必要的信息
+	if option.ExchangeName == "" || option.MqURL == "" {
+		logger.Infof("QueueName and mqUrl is required,\nbut queueName and mqUrl are %s and %s.", "", "")
+		return nil, errors.New("QueueName and mqUrl is required")
+	}
+
+	rabbitmq, err := newRabbitMQ(option)
+	if err != nil {
+		return nil, err
+	}
+
+	rabbitmq.NotifyConnectionClose()
+	rabbitmq.NotifyChannelClose()
+
+	return &MqSimple{
 		rabbitmq,
 	}, nil
 }
 
 // Publish 订阅模式发布消息
-func (r *MqFanout) Publish(message string) error {
+func (r *MqFanout) Publish(message string, handler MsgHandler) error {
 	select {
-	case <-r.ctx.Done():
-		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
+	case <-r.Ctx.Done():
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        "",
+			Message:      []byte(message),
+		})
+		return fmt.Errorf("context cancel publish" + r.Ctx.Err().Error())
 	default:
 	}
 
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
-	r.ListenConfirm()
+	var (
+		ack  = make(chan uint64)
+		nack = make(chan uint64)
+	)
+	r.NotifyConfirm(ack, nack)
 
 	// 1 尝试连接交换机
 	if err := r.exchangeDeclare(); err != nil {
@@ -59,8 +90,8 @@ func (r *MqFanout) Publish(message string) error {
 
 	// 2 发送消息
 	msgId := uuid.New().String()
-	return r.RabbitMQ.channel.PublishWithContext(
-		r.ctx,
+	if err := r.RabbitMQ.channel.PublishWithContext(
+		r.Ctx,
 		r.ExchangeName, // 交换机名称
 		r.Routing,      // 路由参数，fanout类型交换机，自动忽略路由参数
 		false,
@@ -71,8 +102,32 @@ func (r *MqFanout) Publish(message string) error {
 			Body:         []byte(message),
 			MessageId:    msgId,
 			Priority:     1, // 设置消息优先级, 建议 1-10 之间
-		})
+		}); err != nil {
+		return err
+	}
 
+	select {
+	case a := <-ack:
+		logger.Info("------------ publish success ---------", a, " ===", message)
+		return nil
+	case n := <-nack:
+		logger.Info("------------ publish failed----------", n, " ===", message)
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msgId,
+			Message:      []byte(message),
+		})
+		return errors.New("**** publish failed *****")
+	case notify := <-r.channel.NotifyReturn(make(chan amqp.Return)):
+		if notify.ReplyCode == amqp.NoRoute {
+			return errors.New("**** no amqp route *****")
+		}
+		logger.Info("----- notify return ----", string(notify.Body))
+
+	}
+	return nil
 }
 
 // Consume 订阅模式消费者
@@ -112,7 +167,7 @@ func (r *MqFanout) Consume(handler MsgHandler) error {
 
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列(死信队列)等措施来处理错误
 			go handler.Failed(FailedMsg{
@@ -157,15 +212,26 @@ func (r *MqFanout) Consume(handler MsgHandler) error {
 }
 
 // PublishDelay 发布延迟队列
-func (r *MqFanout) PublishDelay(message string, ttl string) error {
+func (r *MqFanout) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	select {
-	case <-r.ctx.Done():
-		return fmt.Errorf("context cancel publish" + r.ctx.Err().Error())
+	case <-r.Ctx.Done():
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        "",
+			Message:      []byte(message),
+		})
+		return fmt.Errorf("context cancel publish" + r.Ctx.Err().Error())
 	default:
 	}
 
 	// 确认消息监听函数， 启动一个协程，监听消息发送情况
-	r.ListenConfirm()
+	var (
+		ack  = make(chan uint64)
+		nack = make(chan uint64)
+	)
+	r.NotifyConfirm(ack, nack)
 
 	// 1 延迟交换机
 	if err := r.channel.ExchangeDeclare(
@@ -176,7 +242,7 @@ func (r *MqFanout) PublishDelay(message string, ttl string) error {
 		false,
 		false,
 		amqp.Table{
-			"x-delayed-type": "fanout",
+			"x-delayed-type": amqp.ExchangeFanout,
 		},
 	); err != nil {
 		return err
@@ -184,8 +250,8 @@ func (r *MqFanout) PublishDelay(message string, ttl string) error {
 	msgId := uuid.New().String()
 
 	// 2 发送消息
-	return r.RabbitMQ.channel.PublishWithContext(
-		r.ctx,
+	if err := r.RabbitMQ.channel.PublishWithContext(
+		r.Ctx,
 		r.ExchangeName, // 交换机名称
 		"",             // 路由参数，fanout类型交换机，自动忽略路由参数
 		false,
@@ -198,7 +264,32 @@ func (r *MqFanout) PublishDelay(message string, ttl string) error {
 			Headers: amqp.Table{
 				"x-delay": ttl,
 			},
+		}); err != nil {
+		return err
+	}
+
+	select {
+	case a := <-ack:
+		logger.Info("------------ publish success ---------", a, " ===", message)
+		return nil
+	case n := <-nack:
+		logger.Info("------------ publish failed----------", n, " ===", message)
+		handler.Failed(FailedMsg{
+			ExchangeName: r.ExchangeName,
+			QueueName:    r.QueueName,
+			Routing:      r.Routing,
+			MsgId:        msgId,
+			Message:      []byte(message),
 		})
+		return errors.New("**** publish failed *****")
+	case notify := <-r.channel.NotifyReturn(make(chan amqp.Return)):
+		if notify.ReplyCode == amqp.NoRoute {
+			return errors.New("**** no amqp route *****")
+		}
+		logger.Info("----- notify return ----", string(notify.Body))
+
+	}
+	return nil
 
 }
 
@@ -213,7 +304,7 @@ func (r *MqFanout) ConsumeDelay(handler MsgHandler) error {
 		false,
 		false,
 		amqp.Table{
-			"x-delayed-type": "fanout",
+			"x-delayed-type": amqp.ExchangeFanout,
 		},
 	); err != nil {
 		return errors.WithMessage(err, "--DlqConsume DlxDeclare err")
@@ -239,7 +330,7 @@ func (r *MqFanout) ConsumeDelay(handler MsgHandler) error {
 	}
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done():
+		case <-r.Ctx.Done():
 			go handler.Failed(FailedMsg{
 				ExchangeName: r.ExchangeName,
 				QueueName:    r.QueueName,
@@ -323,7 +414,7 @@ func (r *MqFanout) ConsumeFailToDlx(handler MsgHandler) error {
 
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			// 拒绝一条消息，true表示将消息重新放回队列, 如果失败，记录日志 或 发送到其他队列(死信队列)等措施来处理错误
 			if err := msg.Reject(false); err != nil { // false 表示不重新放回队列
@@ -402,7 +493,7 @@ func (r *MqFanout) ConsumeDlx(handler MsgHandler) error {
 
 	for msg := range deliveries {
 		select {
-		case <-r.Ctx().Done(): // 通过context控制消费者退出
+		case <-r.Ctx.Done(): // 通过context控制消费者退出
 			logger.Info("fanout Consume context cancel Consume")
 			go handler.Failed(FailedMsg{
 				ExchangeName: r.ExchangeName,
@@ -451,8 +542,8 @@ func (r *MqFanout) ConsumeDlx(handler MsgHandler) error {
 func (r *MqFanout) exchangeDeclare() error {
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName,
-		"fanout", // 这里一定要设计为"fanout"也就是广播类型。
-		true,     // 持久化
+		amqp.ExchangeFanout, // 这里一定要设计为"fanout"也就是广播类型。
+		true,                // 持久化
 		false,
 		false,
 		false,
@@ -487,7 +578,7 @@ func (r *MqFanout) dlxExchangeDeclare() error {
 	// 死信交换机
 	return r.channel.ExchangeDeclare(
 		r.ExchangeName+"-dlx", // 死信交换机名字
-		"fanout",              // 死信交换机类型
+		amqp.ExchangeFanout,   // 死信交换机类型
 		true,                  // 是否持久化
 		false,
 		false,

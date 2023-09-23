@@ -35,20 +35,24 @@ const (
 )
 
 // RabbitMQ RabbitMQ实例
+
+type MQOption struct {
+	ExchangeName string // 交换机名称
+	QueueName    string // 队列名称
+	Routing      string // Binding Key/Routing Key, Simple模式 几乎用不到
+	MqURL        string // 连接信息-amqp://账号:密码@地址:端口号/-amqp://guest:guest@127.0.0.1:5672/
+	ConnName     string // 连接名称
+	Ctx          context.Context
+}
+
 type RabbitMQ struct {
-	conn         *amqp.Connection // 连接
-	channel      *amqp.Channel    // 管道
-	ExchangeName string           // 交换机名称
-	QueueName    string           // 队列名称
-	Routing      string           // Binding Key/Routing Key, Simple模式 几乎用不到
-	MqURL        string           // 连接信息-amqp://账号:密码@地址:端口号/-amqp://guest:guest@127.0.0.1:5672/
-	ctx          context.Context
-
+	MQOption
+	conn          *amqp.Connection       // 连接
+	channel       *amqp.Channel          // 管道
 	notifyConfirm chan amqp.Confirmation // 确认发送到mq的channel
-
-	notifyClose chan *amqp.Error // 如果异常关闭，会接受数据
-
-	msgExpiration string // 消息过期时间
+	notifyReturn  chan amqp.Return       // 确认入列成功的channel
+	notifyClose   chan *amqp.Error       // 如果异常关闭，会接受数据
+	msgExpiration string                 // 消息过期时间
 }
 
 type MsgHandler interface {
@@ -66,11 +70,11 @@ type FailedMsg struct {
 // RabbitMQInterface 定义RabbitMQ实例的接口
 // 每种RabbitMQ实例都有发布和消费两种功能
 type RabbitMQInterface interface {
-	Publish(message string) error
+	Publish(message string, handler MsgHandler) error
 	Consume(handler MsgHandler) error
 
 	// PublishDelay 延迟队列
-	PublishDelay(message string, ttl string) error
+	PublishDelay(message string, handler MsgHandler, ttl string) error
 	ConsumeDelay(handler MsgHandler) error
 
 	// ConsumeFailToDlx 消息消费失败进入死信队列
@@ -79,15 +83,12 @@ type RabbitMQInterface interface {
 }
 
 // NewRabbitMQ 创建一个RabbitMQ实例
-func newRabbitMQ(ctx context.Context, exchangeName, queueName, key, mqUrl string) (mq *RabbitMQ, err error) {
-
-	mq = &RabbitMQ{
-		QueueName:    queueName,
-		ExchangeName: exchangeName,
-		Routing:      key,
-		MqURL:        mqUrl,
-		ctx:          ctx,
-	}
+func newRabbitMQ(bp MQOption) (*RabbitMQ, error) {
+	var (
+		mq  RabbitMQ
+		err error
+	)
+	mq.MQOption = bp
 
 	// 创建rabbitmq连接
 	config := amqp.Config{
@@ -96,15 +97,12 @@ func newRabbitMQ(ctx context.Context, exchangeName, queueName, key, mqUrl string
 		Heartbeat:  10 * time.Second,
 		Locale:     "en_US",
 	}
-	config.Properties.SetClientConnectionName("rabbit-with-" + exchangeName + "-" + queueName)
+	config.Properties.SetClientConnectionName(bp.ConnName)
 
 	mq.conn, err = amqp.DialConfig(mq.MqURL, config)
 	if err != nil {
 		return nil, err
 	}
-
-	// get reconnect connection
-	mq.NotifyConnectionClose(config)
 
 	mq.channel, err = mq.conn.Channel()
 	if err != nil {
@@ -116,14 +114,18 @@ func newRabbitMQ(ctx context.Context, exchangeName, queueName, key, mqUrl string
 		return nil, err
 	}
 
-	// auto reconnect channel
-	mq.NotifyChannelClose()
-
-	return
+	return &mq, nil
 }
 
-func (r *RabbitMQ) NotifyConnectionClose(config amqp.Config) {
+func (r *RabbitMQ) NotifyConnectionClose() {
 	go func() {
+		config := amqp.Config{
+			Vhost:      "/",
+			Properties: amqp.NewConnectionProperties(),
+			Heartbeat:  10 * time.Second,
+			Locale:     "en_US",
+		}
+		config.Properties.SetClientConnectionName(r.ConnName)
 		for {
 			reason, ok := <-r.conn.NotifyClose(make(chan *amqp.Error))
 			if !ok {
@@ -186,10 +188,6 @@ func (r *RabbitMQ) Destroy() {
 
 }
 
-func (r *RabbitMQ) Ctx() context.Context {
-	return r.ctx
-}
-
 // SetConfirm 设置监听消息发送
 func (r *RabbitMQ) SetConfirm() error {
 	err := r.channel.Confirm(false)
@@ -197,7 +195,7 @@ func (r *RabbitMQ) SetConfirm() error {
 		logger.Info("this.Channel.Confirm  ", err)
 		return err
 	}
-	r.notifyConfirm = r.channel.NotifyPublish(make(chan amqp.Confirmation))
+	r.notifyConfirm = r.channel.NotifyPublish(make(chan amqp.Confirmation, 1))
 	return nil
 }
 
@@ -206,10 +204,25 @@ func (r *RabbitMQ) ListenConfirm() {
 	go func() {
 		for c := range r.notifyConfirm {
 			if c.Ack {
-				log.Println("confirm:消息发送成功")
+				log.Println("confirm:消息发送成功:", c.DeliveryTag)
 			} else {
 				// 这里表示消息发送到mq失败,可以处理失败流程
 				log.Println("confirm:消息发送失败")
+			}
+		}
+	}()
+}
+
+func (r *RabbitMQ) NotifyConfirm(ack chan uint64, nack chan uint64) {
+	go func() {
+		for c := range r.notifyConfirm {
+			if c.Ack {
+				// logger.Info("--confirm:消息发送成功:", c.DeliveryTag)
+				ack <- c.DeliveryTag
+			} else {
+				// 这里表示消息发送到mq失败,可以处理失败流程
+				logger.Info("---confirm:消息发送失败---")
+				nack <- c.DeliveryTag
 			}
 		}
 	}()
@@ -226,6 +239,10 @@ func (r *RabbitMQ) NotifyReturn() {
 			// if string(p.Body) != "" && !ok {
 			if string(p.Body) != "" {
 				logger.Info("消息没有正确入列:", string(p.Body), "; MessageId:", p.MessageId)
+			}
+
+			if p.ReplyCode == amqp.NoRoute {
+				logger.Infof("no amqp route for %s", p.RoutingKey)
 			}
 
 		}
