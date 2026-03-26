@@ -1,22 +1,62 @@
 # mq
-##消息队列
 
-https://driverzhang.github.io/post/rabbitmq%E5%AE%9E%E6%88%98golang%E5%AE%9E%E7%8E%B0/
+RabbitMQ wrapper for Go 1.26.1.
 
-#### 重试队列逻辑
-- 消息进入队列前，header默认有参数 x-retry=0 表示尝试次数；
+## Features
 
-- 消费者在消费时候的，如果消息失败，就把消息插入另外一个队列（重试队列abc）；该重试队列abc 绑定一个死信队列（原始消费的队列），这样形成一个回路；
+- Supports `simple`, `direct`, `fanout`, and `topic` modes.
+- Publisher confirms use per-operation channels to avoid shared-channel races.
+- Consumers use explicit reconnect loops and context-driven shutdown.
+- Retry headers are normalized through `x-retry`.
+- Delay queues use TTL + dead-letter routing and do not require the `x-delayed-message` plugin.
+- Dead-letter consumption is supported for `simple`, `direct`, `fanout`, and `topic`.
 
-- 当消息失败后，消息就进入重试队列abc，重试队列abc拥有ttl过期时间，ttl过期时间到了后，该消息进入死信队列（死信队列刚好是刚开始我们消费的队列）；
+## Dependencies
 
-这样消息就又回到原始消费队列尾部了；
+- `github.com/rabbitmq/amqp091-go v1.10.0`
+- `github.com/google/uuid v1.6.0`
 
-- 最后可以通过队列消息头部的header参数retry_num 可以控制消息消费多少次后，直接插入db日志；
+## Notes
 
+- `Destroy()` is idempotent and cancels the instance-owned context.
+- Publish paths are concurrency-safe because each publish call opens its own AMQP channel.
+- Fanout mode does not auto-retry failed deliveries, because retrying through a fanout exchange would duplicate messages for subscribers that already succeeded.
+- Optional configuration now uses function options instead of passing a config struct to constructors.
 
+## Usage
 
-- db日志可以记录交换机 路由，queuename，这样，可以做一个后台管理，可以手动一次把消息重新放入队列，进行消息（因为有时间消费队列里面可能在请求其它服务，其它服务也可能会挂掉）
+```go
+ctx := context.Background()
 
-这时候消息无论你消费多少次都没有用，但是入库db后，可以一键重回队列消息（当我们知道服务已经正常后）
-![img.png](img.png)
+producer, err := rabbit.NewPubDirect(
+    "orders.exchange",
+    "orders.created",
+    "amqp://guest:guest@127.0.0.1:5672/",
+    rabbit.WithContext(ctx),
+    rabbit.WithConnectionName("orders-producer"),
+)
+if err != nil {
+    return err
+}
+defer producer.Destroy()
+```
+
+## Tests
+
+Unit tests run with:
+
+```bash
+go test ./...
+```
+
+Integration tests are opt-in:
+
+```bash
+MQ_INTEGRATION=1 go test ./test -count=1
+```
+
+Custom RabbitMQ address:
+
+```bash
+MQ_INTEGRATION=1 MQ_URL=amqp://guest:guest@127.0.0.1:5672/ go test ./test -count=1
+```

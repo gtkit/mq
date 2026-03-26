@@ -11,6 +11,7 @@ import (
 )
 
 func TestSimpleMq(t *testing.T) {
+	requireRabbitMQ(t)
 	example12()
 }
 
@@ -27,14 +28,12 @@ func (m *Consumefail) Failed(msg rabbit.FailedMsg) {
 
 func example12() {
 	var queueName = "queue-simple"
-	rabbitmq2, err2 := rabbit.NewConsumeSimple(rabbit.MQOption{
-		ExchangeName: "",
-		QueueName:    queueName,
-		Routing:      "",
-		MqURL:        MQURL,
-		ConnName:     "123",
-		Ctx:          context.Background(),
-	})
+	rabbitmq2, err2 := rabbit.NewConsumeSimple(
+		queueName,
+		mqURL,
+		rabbit.WithConnectionName("123"),
+		rabbit.WithContext(context.Background()),
+	)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -43,14 +42,12 @@ func example12() {
 	go func() {
 		for i := 0; i < 100; i++ {
 			ctx, cancel := context.WithCancel(context.Background())
-			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
-				ExchangeName: "",
-				QueueName:    queueName,
-				Routing:      "",
-				MqURL:        MQURL,
-				ConnName:     "121",
-				Ctx:          ctx,
-			})
+			rabbitmq1, _ := rabbit.NewPubSimple(
+				queueName,
+				mqURL,
+				rabbit.WithConnectionName("121"),
+				rabbit.WithContext(ctx),
+			)
 
 			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &Consumefail{})
 			if err != nil {
@@ -78,6 +75,7 @@ func example12() {
 }
 
 func TestSimpleMqDlx(t *testing.T) {
+	requireRabbitMQ(t)
 	example12Dlx()
 }
 
@@ -103,14 +101,11 @@ func (m *doDlx) Failed(msg rabbit.FailedMsg) {
 func example12Dlx() {
 	var queueName = "queue3-dlx"
 
-	rabbitmq2, err2 := rabbit.NewConsumeSimple(rabbit.MQOption{
-		ExchangeName: "",
-		QueueName:    queueName,
-		Routing:      "",
-		MqURL:        MQURL,
-		ConnName:     "",
-		Ctx:          context.Background(),
-	})
+	rabbitmq2, err2 := rabbit.NewConsumeSimple(
+		queueName,
+		mqURL,
+		rabbit.WithContext(context.Background()),
+	)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -120,14 +115,11 @@ func example12Dlx() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(2 * time.Second)
 			ctx, cancel := context.WithCancel(context.Background())
-			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
-				ExchangeName: "",
-				QueueName:    queueName,
-				Routing:      "",
-				MqURL:        MQURL,
-				ConnName:     "",
-				Ctx:          ctx,
-			})
+			rabbitmq1, _ := rabbit.NewPubSimple(
+				queueName,
+				mqURL,
+				rabbit.WithContext(ctx),
+			)
 			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &SimpleMqDlx{})
 
 			if err != nil {
@@ -166,6 +158,7 @@ func example12Dlx() {
 
 // 延迟队列
 func TestSimpleDelay(t *testing.T) {
+	requireRabbitMQ(t)
 	example12Delay()
 }
 
@@ -180,14 +173,11 @@ func (m *SimpleDelay) Failed(msg rabbit.FailedMsg) {
 }
 func example12Delay() {
 	var queueName = "delay-queue"
-	rabbitmq2, err2 := rabbit.NewConsumeSimple(rabbit.MQOption{
-		ExchangeName: "",
-		QueueName:    queueName,
-		Routing:      "",
-		MqURL:        MQURL,
-		ConnName:     "",
-		Ctx:          context.Background(),
-	})
+	rabbitmq2, err2 := rabbit.NewConsumeSimple(
+		queueName,
+		mqURL,
+		rabbit.WithContext(context.Background()),
+	)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -197,14 +187,11 @@ func example12Delay() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			ctx, cancel := context.WithCancel(context.Background())
-			rabbitmq1, _ := rabbit.NewPubSimple(rabbit.MQOption{
-				ExchangeName: "",
-				QueueName:    queueName,
-				Routing:      "",
-				MqURL:        MQURL,
-				ConnName:     "",
-				Ctx:          ctx,
-			})
+			rabbitmq1, _ := rabbit.NewPubSimple(
+				queueName,
+				mqURL,
+				rabbit.WithContext(ctx),
+			)
 
 			err := rabbitmq1.PublishDelay("消息："+strconv.Itoa(i), &SimpleDelay{}, "2000")
 

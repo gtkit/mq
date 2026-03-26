@@ -14,16 +14,19 @@ import (
 
 // 测试路由模式
 func TestDirect(t *testing.T) {
+	requireRabbitMQ(t)
 	exampleDirect()
 }
 
 // 测试路由模式延迟队列
 func TestDirectDelay(t *testing.T) {
+	requireRabbitMQ(t)
 	exampleDirectDelay()
 }
 
 // 测试路由模式死信队列
 func TestDirectDlx(t *testing.T) {
+	requireRabbitMQ(t)
 	exampleDirectDlx()
 }
 
@@ -54,14 +57,13 @@ func exampleDirectDlx() {
 		// queueName  = "queue.direct"
 		queueName = ""
 	)
-	rabbitmq2, err1 := rabbit.NewConsumeDirect(rabbit.MQOption{
-		ExchangeName: exchange,
-		QueueName:    queueName,
-		Routing:      routingKey,
-		MqURL:        MQURL,
-		ConnName:     "",
-		Ctx:          context.Background(),
-	})
+	rabbitmq2, err1 := rabbit.NewConsumeDirect(
+		exchange,
+		routingKey,
+		mqURL,
+		rabbit.WithQueueName(queueName),
+		rabbit.WithContext(context.Background()),
+	)
 	defer rabbitmq2.Destroy()
 	if err1 != nil {
 		log.Println(err1)
@@ -71,14 +73,12 @@ func exampleDirectDlx() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			ctx, cancel := context.WithCancel(context.Background())
-			rabbitmq1, _ := rabbit.NewPubDirect(rabbit.MQOption{
-				ExchangeName: "exchange.delay",
-				QueueName:    "",
-				Routing:      "",
-				MqURL:        MQURL,
-				ConnName:     "",
-				Ctx:          ctx,
-			})
+			rabbitmq1, _ := rabbit.NewPubDirect(
+				exchange,
+				routingKey,
+				mqURL,
+				rabbit.WithContext(ctx),
+			)
 
 			msg := "消息：" + strconv.Itoa(i)
 			err := rabbitmq1.Publish(msg, &DirectFailToDlx{})
@@ -129,14 +129,12 @@ func exampleDirectDelay() {
 		exchange   = "exchange.direct.delay"
 	)
 
-	rabbitmq2, err2 := rabbit.NewConsumeDirect(rabbit.MQOption{
-		ExchangeName: exchange,
-		QueueName:    "",
-		Routing:      routingKey,
-		MqURL:        MQURL,
-		ConnName:     "",
-		Ctx:          context.Background(),
-	})
+	rabbitmq2, err2 := rabbit.NewConsumeDirect(
+		exchange,
+		routingKey,
+		mqURL,
+		rabbit.WithContext(context.Background()),
+	)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println(err2)
@@ -145,14 +143,12 @@ func exampleDirectDelay() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			ctx, cancel := context.WithCancel(context.Background())
-			rabbitmq1, _ := rabbit.NewPubDirect(rabbit.MQOption{
-				ExchangeName: exchange,
-				QueueName:    "",
-				Routing:      routingKey,
-				MqURL:        MQURL,
-				ConnName:     "",
-				Ctx:          ctx,
-			})
+			rabbitmq1, _ := rabbit.NewPubDirect(
+				exchange,
+				routingKey,
+				mqURL,
+				rabbit.WithContext(ctx),
+			)
 			msg := "消息：" + strconv.Itoa(i)
 			err := rabbitmq1.PublishDelay(msg, &DirectDelay{}, "2000")
 			if err != nil {
@@ -198,14 +194,13 @@ func exampleDirect() {
 		// queueName = ""
 	)
 
-	rabbitmq2, err2 := rabbit.NewConsumeDirect(rabbit.MQOption{
-		ExchangeName: exchangeName,
-		QueueName:    queueName,
-		Routing:      routingKey,
-		MqURL:        MQURL,
-		ConnName:     "",
-		Ctx:          context.Background(),
-	})
+	rabbitmq2, err2 := rabbit.NewConsumeDirect(
+		exchangeName,
+		routingKey,
+		mqURL,
+		rabbit.WithQueueName(queueName),
+		rabbit.WithContext(context.Background()),
+	)
 	defer rabbitmq2.Destroy()
 	if err2 != nil {
 		log.Println("rabbitmq2----", err2)
@@ -214,14 +209,12 @@ func exampleDirect() {
 		for i := 0; i < 100; i++ {
 			time.Sleep(1 * time.Second)
 			ctx, cancel := context.WithCancel(context.Background())
-			rabbitmq1, _ := rabbit.NewPubDirect(rabbit.MQOption{
-				ExchangeName: "exchange.delay",
-				QueueName:    "",
-				Routing:      "",
-				MqURL:        MQURL,
-				ConnName:     "",
-				Ctx:          ctx,
-			})
+			rabbitmq1, _ := rabbit.NewPubDirect(
+				exchangeName,
+				routingKey,
+				mqURL,
+				rabbit.WithContext(ctx),
+			)
 			err := rabbitmq1.Publish("消息："+strconv.Itoa(i), &Direct{})
 			if err != nil {
 				log.Println("-----------------example Publish error:", err)
