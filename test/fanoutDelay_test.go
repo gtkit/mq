@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"mq/rabbit"
+	"github.com/gtkit/mq/rabbit"
 )
 
 func TestDealySubMq(t *testing.T) {

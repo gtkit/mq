@@ -8,12 +8,15 @@ import (
 
 var _ Logger = (*Log)(nil)
 
+// Logger 定义了库内部使用的最小日志接口。
+// 调用方可以实现该接口后通过 SetLogger 注入自己的日志实例。
 type Logger interface {
 	Info(args ...any)
 	Infof(template string, args ...any)
 	Errorf(template string, args ...any)
 }
 
+// Log 是基于标准库 log 的默认日志实现。
 type Log struct{}
 
 type loggerHolder struct {
@@ -48,10 +51,12 @@ func (l *Log) Errorf(template string, args ...any) {
 	log.Printf(template, args...)
 }
 
+// NewLogger 返回默认日志实现。
 func NewLogger() Logger {
 	return &Log{}
 }
 
+// SetLogger 注入一个实现了 Logger 接口的日志实例。
 func SetLogger(l Logger) {
 	if l == nil {
 		return
@@ -70,6 +75,10 @@ func currentLogger() Logger {
 	return logger
 }
 
+// SetExternalLogger 注入一个外部日志实例。
+// 如果传入对象直接实现了 Logger，会直接使用；
+// 否则只要实现了 Infof 和 Errorf，也会被自动适配。
+// 该方法适合直接接入 github.com/gtkit/logger 这类项目级 logger。
 func SetExternalLogger(l any) bool {
 	if l == nil {
 		return false

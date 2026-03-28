@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"mq/rabbit"
+	"github.com/gtkit/mq/rabbit"
 )
 
 func TestSimpleMq(t *testing.T) {

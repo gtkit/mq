@@ -41,14 +41,17 @@ func newMqSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
 	return &MqSimple{RabbitMQ: rabbitmq}, nil
 }
 
+// NewPubSimple 创建 simple 模式发布端实例。
 func NewPubSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
 	return newMqSimple(queueName, mqURL, opts...)
 }
 
+// NewConsumeSimple 创建 simple 模式消费端实例。
 func NewConsumeSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
 	return newMqSimple(queueName, mqURL, opts...)
 }
 
+// Publish 向普通队列发布一条持久化消息。
 func (r *MqSimple) Publish(message string, handler MsgHandler) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -100,6 +103,7 @@ func (r *MqSimple) Publish(message string, handler MsgHandler) error {
 	return nil
 }
 
+// Consume 持续消费普通队列中的消息。
 func (r *MqSimple) Consume(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -178,11 +182,13 @@ func (r *MqSimple) Consume(handler MsgHandler) error {
 	}
 }
 
+// RetryMsg 将当前 delivery 手动发送到 retry queue。
 func (r *MqSimple) RetryMsg(msg amqp.Delivery, ttl string) error {
 	headers := copyHeaders(msg.Headers)
 	return r.publishRetryMessage(msg, headers, ttl)
 }
 
+// PublishDelay 发布一条延迟消息。
 func (r *MqSimple) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -253,10 +259,12 @@ func (r *MqSimple) PublishDelay(message string, handler MsgHandler, ttl string) 
 	return nil
 }
 
+// ConsumeDelay 在 simple 模式下等价于 Consume。
 func (r *MqSimple) ConsumeDelay(handler MsgHandler) error {
 	return r.Consume(handler)
 }
 
+// PublishWithDlx 在声明死信拓扑后向主队列发布消息。
 func (r *MqSimple) PublishWithDlx(message string) error {
 	ctx := r.contextOrBackground()
 
@@ -297,6 +305,7 @@ func (r *MqSimple) PublishWithDlx(message string) error {
 	})
 }
 
+// ConsumeFailToDlx 消费主队列，并在业务处理失败时直接转入死信队列。
 func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -375,6 +384,7 @@ func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 	}
 }
 
+// ConsumeDlx 持续消费 simple 模式的死信队列。
 func (r *MqSimple) ConsumeDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")

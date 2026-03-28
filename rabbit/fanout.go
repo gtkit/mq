@@ -39,14 +39,17 @@ func newMqFanout(exchangeName, mqURL string, opts ...Option) (*MqFanout, error) 
 	return &MqFanout{RabbitMQ: rabbitmq}, nil
 }
 
+// NewPubFanout 创建 fanout 模式发布端实例。
 func NewPubFanout(exchangeName, mqURL string, opts ...Option) (*MqFanout, error) {
 	return newMqFanout(exchangeName, mqURL, opts...)
 }
 
+// NewConsumeFanout 创建 fanout 模式消费端实例。
 func NewConsumeFanout(exchangeName, mqURL string, opts ...Option) (*MqFanout, error) {
 	return newMqFanout(exchangeName, mqURL, opts...)
 }
 
+// Publish 向 fanout exchange 广播一条消息。
 func (r *MqFanout) Publish(message string, handler MsgHandler) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -91,6 +94,7 @@ func (r *MqFanout) Publish(message string, handler MsgHandler) error {
 	return nil
 }
 
+// Consume 持续消费 fanout 模式消息。
 func (r *MqFanout) Consume(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -169,6 +173,7 @@ func (r *MqFanout) Consume(handler MsgHandler) error {
 	}
 }
 
+// PublishDelay 发布一条延迟广播消息。
 func (r *MqFanout) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -232,10 +237,12 @@ func (r *MqFanout) PublishDelay(message string, handler MsgHandler, ttl string) 
 	return nil
 }
 
+// ConsumeDelay 在 fanout 模式下等价于 Consume。
 func (r *MqFanout) ConsumeDelay(handler MsgHandler) error {
 	return r.Consume(handler)
 }
 
+// ConsumeFailToDlx 消费主队列，并在业务处理失败时直接转入死信队列。
 func (r *MqFanout) ConsumeFailToDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -314,6 +321,7 @@ func (r *MqFanout) ConsumeFailToDlx(handler MsgHandler) error {
 	}
 }
 
+// ConsumeDlx 持续消费 fanout 模式的死信队列。
 func (r *MqFanout) ConsumeDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")

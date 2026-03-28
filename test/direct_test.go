@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"mq/rabbit"
+	"github.com/gtkit/mq/rabbit"
 )
 
 // 测试路由模式

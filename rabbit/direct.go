@@ -41,14 +41,17 @@ func newMqDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDir
 	return &MqDirect{RabbitMQ: rabbitmq}, nil
 }
 
+// NewPubDirect 创建 direct 模式发布端实例。
 func NewPubDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDirect, error) {
 	return newMqDirect(exchangeName, routingKey, mqURL, opts...)
 }
 
+// NewConsumeDirect 创建 direct 模式消费端实例。
 func NewConsumeDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDirect, error) {
 	return newMqDirect(exchangeName, routingKey, mqURL, opts...)
 }
 
+// Publish 向 direct exchange 发布一条持久化消息。
 func (r *MqDirect) Publish(message string, handler MsgHandler) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -96,6 +99,7 @@ func (r *MqDirect) Publish(message string, handler MsgHandler) error {
 	return nil
 }
 
+// Consume 持续消费 direct 模式消息。
 func (r *MqDirect) Consume(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -174,11 +178,14 @@ func (r *MqDirect) Consume(handler MsgHandler) error {
 	}
 }
 
+// RetryMsg 将当前 delivery 手动发送到 retry queue。
 func (r *MqDirect) RetryMsg(msg amqp.Delivery, ttl string) error {
 	headers := copyHeaders(msg.Headers)
 	return r.publishRetryMessage(msg, headers, ttl)
 }
 
+// PublishDelay 发布一条延迟消息。
+// ttl 单位为毫秒字符串，例如 "5000" 表示 5 秒。
 func (r *MqDirect) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -246,10 +253,12 @@ func (r *MqDirect) PublishDelay(message string, handler MsgHandler, ttl string) 
 	return nil
 }
 
+// ConsumeDelay 在 direct 模式下等价于 Consume。
 func (r *MqDirect) ConsumeDelay(handler MsgHandler) error {
 	return r.Consume(handler)
 }
 
+// ConsumeFailToDlx 消费主队列，并在业务处理失败时直接转入死信队列。
 func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -328,6 +337,7 @@ func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 	}
 }
 
+// ConsumeDlx 持续消费 direct 模式的死信队列。
 func (r *MqDirect) ConsumeDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")

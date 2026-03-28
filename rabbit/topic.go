@@ -41,19 +41,23 @@ func newMqTopic(exchangeName, routingKey, mqURL string, opts ...Option) (*MqTopi
 	return &MqTopic{RabbitMQ: rabbitmq}, nil
 }
 
+// NewPubTopic 创建 topic 模式发布端实例。
 func NewPubTopic(exchangeName, routingKey, mqURL string, opts ...Option) (*MqTopic, error) {
 	return newMqTopic(exchangeName, routingKey, mqURL, opts...)
 }
 
+// NewConsumeTopic 创建 topic 模式消费端实例。
 func NewConsumeTopic(exchangeName, routingKey, mqURL string, opts ...Option) (*MqTopic, error) {
 	return newMqTopic(exchangeName, routingKey, mqURL, opts...)
 }
 
 // Deprecated: use NewPubTopic or NewConsumeTopic.
+// NewMQTopic 为旧版 topic 构造函数，保留用于兼容历史代码。
 func NewMQTopic(exchangeName, routingKey, mqURL string, opts ...Option) (*MqTopic, error) {
 	return newMqTopic(exchangeName, routingKey, mqURL, opts...)
 }
 
+// Publish 向 topic exchange 发布一条持久化消息。
 func (r *MqTopic) Publish(message string, handler MsgHandler) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -101,6 +105,7 @@ func (r *MqTopic) Publish(message string, handler MsgHandler) error {
 	return nil
 }
 
+// Consume 持续消费 topic 模式消息。
 func (r *MqTopic) Consume(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -179,6 +184,7 @@ func (r *MqTopic) Consume(handler MsgHandler) error {
 	}
 }
 
+// PublishDelay 发布一条延迟主题消息。
 func (r *MqTopic) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	ctx := r.contextOrBackground()
 	body := []byte(message)
@@ -246,10 +252,12 @@ func (r *MqTopic) PublishDelay(message string, handler MsgHandler, ttl string) e
 	return nil
 }
 
+// ConsumeDelay 在 topic 模式下等价于 Consume。
 func (r *MqTopic) ConsumeDelay(handler MsgHandler) error {
 	return r.Consume(handler)
 }
 
+// ConsumeFailToDlx 消费主队列，并在业务处理失败时直接转入死信队列。
 func (r *MqTopic) ConsumeFailToDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")
@@ -328,6 +336,7 @@ func (r *MqTopic) ConsumeFailToDlx(handler MsgHandler) error {
 	}
 }
 
+// ConsumeDlx 持续消费 topic 模式的死信队列。
 func (r *MqTopic) ConsumeDlx(handler MsgHandler) error {
 	if handler == nil {
 		return fmt.Errorf("handler is required")

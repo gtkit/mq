@@ -25,6 +25,7 @@ type MQOption struct {
 	RetryTTL     string
 }
 
+// RabbitMQ 封装了共享的 connection、publish channel 和生命周期控制逻辑。
 type RabbitMQ struct {
 	MQOption
 	connMu    sync.Mutex
@@ -36,11 +37,14 @@ type RabbitMQ struct {
 	cancel    context.CancelFunc
 }
 
+// MsgHandler 定义了消息处理器接口。
+// Process 负责处理消息，Failed 用于接收最终失败通知。
 type MsgHandler interface {
 	Process([]byte, string) error
 	Failed(FailedMsg)
 }
 
+// FailedMsg 表示发布失败或消费最终失败时传递给业务方的消息上下文。
 type FailedMsg struct {
 	ExchangeName string
 	QueueName    string
@@ -49,6 +53,7 @@ type FailedMsg struct {
 	Message      []byte
 }
 
+// RabbitMQInterface 定义了当前库中几种 MQ 模式的共同行为。
 type RabbitMQInterface interface {
 	Publish(message string, handler MsgHandler) error
 	Consume(handler MsgHandler) error
@@ -144,6 +149,7 @@ func notifyFailed(handler MsgHandler, msg FailedMsg) {
 	handler.Failed(msg)
 }
 
+// ParseUri 解析 RabbitMQ 连接串。
 func ParseUri(uri string) (amqp.URI, error) {
 	return amqp.ParseURI(uri)
 }
