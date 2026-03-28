@@ -23,6 +23,14 @@ func TestNormalizeOptionDefaultsContextAndConnectionName(t *testing.T) {
 	if opt.ConnName == "" {
 		t.Fatal("normalizeOption() returned empty connection name")
 	}
+
+	if opt.MaxRetry != defaultMaxRetry {
+		t.Fatalf("normalizeOption() maxRetry = %d, want %d", opt.MaxRetry, defaultMaxRetry)
+	}
+
+	if opt.RetryTTL != defaultRetryTTL {
+		t.Fatalf("normalizeOption() retryTTL = %q, want %q", opt.RetryTTL, defaultRetryTTL)
+	}
 }
 
 func TestNormalizeOptionPreservesProvidedContextAndConnectionName(t *testing.T) {
@@ -47,6 +55,14 @@ func TestNormalizeOptionPreservesProvidedContextAndConnectionName(t *testing.T) 
 	if opt.ConnName != "producer-a" {
 		t.Fatalf("normalizeOption() connName = %q, want %q", opt.ConnName, "producer-a")
 	}
+
+	if opt.MaxRetry != defaultMaxRetry {
+		t.Fatalf("normalizeOption() maxRetry = %d, want %d", opt.MaxRetry, defaultMaxRetry)
+	}
+
+	if opt.RetryTTL != defaultRetryTTL {
+		t.Fatalf("normalizeOption() retryTTL = %q, want %q", opt.RetryTTL, defaultRetryTTL)
+	}
 }
 
 func TestNewOptionAppliesFunctionalOptions(t *testing.T) {
@@ -59,6 +75,8 @@ func TestNewOptionAppliesFunctionalOptions(t *testing.T) {
 		WithQueueName("jobs"),
 		WithConnectionName("producer-a"),
 		WithContext(ctx),
+		WithMaxRetry(5),
+		WithRetryTTL("3500"),
 	)
 	if err != nil {
 		t.Fatalf("newOption() error = %v", err)
@@ -74,5 +92,13 @@ func TestNewOptionAppliesFunctionalOptions(t *testing.T) {
 
 	if opt.Ctx != ctx {
 		t.Fatal("newOption() replaced the provided context")
+	}
+
+	if opt.MaxRetry != 5 {
+		t.Fatalf("newOption() maxRetry = %d, want %d", opt.MaxRetry, 5)
+	}
+
+	if opt.RetryTTL != "3500" {
+		t.Fatalf("newOption() retryTTL = %q, want %q", opt.RetryTTL, "3500")
 	}
 }

@@ -30,6 +30,18 @@ func WithQueueName(name string) Option {
 	}
 }
 
+func WithMaxRetry(maxRetry int32) Option {
+	return func(option *MQOption) {
+		option.MaxRetry = maxRetry
+	}
+}
+
+func WithRetryTTL(ttl string) Option {
+	return func(option *MQOption) {
+		option.RetryTTL = ttl
+	}
+}
+
 func newOption(mqURL string, opts ...Option) (MQOption, error) {
 	option := MQOption{
 		MqURL: mqURL,
@@ -63,6 +75,15 @@ func normalizeOption(option MQOption) (MQOption, error) {
 
 	if option.ConnName == "" {
 		option.ConnName = "mq-" + uuid.NewString()
+	}
+
+	if option.MaxRetry <= 0 {
+		option.MaxRetry = defaultMaxRetry
+	}
+
+	option.RetryTTL = strings.TrimSpace(option.RetryTTL)
+	if option.RetryTTL == "" {
+		option.RetryTTL = defaultRetryTTL
 	}
 
 	return option, nil

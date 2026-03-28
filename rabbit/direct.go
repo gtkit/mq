@@ -13,7 +13,9 @@ type MqDirect struct {
 	*RabbitMQ
 }
 
-func NewPubDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDirect, error) {
+var _ RabbitMQInterface = (*MqDirect)(nil)
+
+func newMqDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDirect, error) {
 	exchangeName = strings.TrimSpace(exchangeName)
 	routingKey = strings.TrimSpace(routingKey)
 	if exchangeName == "" || routingKey == "" {
@@ -26,6 +28,10 @@ func NewPubDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDi
 	}
 	option.ExchangeName = exchangeName
 	option.Routing = routingKey
+	option, err = normalizeOption(option)
+	if err != nil {
+		return nil, err
+	}
 
 	rabbitmq, err := newRabbitMQ(option)
 	if err != nil {
@@ -35,71 +41,55 @@ func NewPubDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDi
 	return &MqDirect{RabbitMQ: rabbitmq}, nil
 }
 
+func NewPubDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDirect, error) {
+	return newMqDirect(exchangeName, routingKey, mqURL, opts...)
+}
+
 func NewConsumeDirect(exchangeName, routingKey, mqURL string, opts ...Option) (*MqDirect, error) {
-	exchangeName = strings.TrimSpace(exchangeName)
-	routingKey = strings.TrimSpace(routingKey)
-	if exchangeName == "" || routingKey == "" {
-		return nil, fmt.Errorf("exchange name and routing key are required")
-	}
-
-	option, err := newOption(mqURL, opts...)
-	if err != nil {
-		return nil, err
-	}
-	option.ExchangeName = exchangeName
-	option.Routing = routingKey
-
-	rabbitmq, err := newRabbitMQ(option)
-	if err != nil {
-		return nil, err
-	}
-
-	return &MqDirect{RabbitMQ: rabbitmq}, nil
+	return newMqDirect(exchangeName, routingKey, mqURL, opts...)
 }
 
 func (r *MqDirect) Publish(message string, handler MsgHandler) error {
 	ctx := r.contextOrBackground()
+	body := []byte(message)
 
 	select {
 	case <-ctx.Done():
-		notifyFailed(handler, r.failedMessage([]byte(message), ""))
+		notifyFailed(handler, r.failedMessage(body, ""))
 		return r.canceledError("publish")
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
-	if err := r.declareExchange(ch); err != nil {
-		return err
-	}
-
 	msgID := uuid.NewString()
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		r.ExchangeName,
-		r.Routing,
-		false,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "text/plain",
-			MessageId:    msgID,
-			Body:         []byte(message),
-			Headers: amqp.Table{
-				"x-retry": int32(0),
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
+	err := r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("exchange", ch, r.declareExchange); err != nil {
+			return err
+		}
 
-	if err := waitForDeferredConfirm(ctx, confirmation); err != nil {
-		notifyFailed(handler, r.failedMessage([]byte(message), msgID))
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			r.ExchangeName,
+			r.Routing,
+			false,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "text/plain",
+				MessageId:    msgID,
+				Body:         body,
+				Headers: amqp.Table{
+					"x-retry": int32(0),
+				},
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
+	if err != nil {
+		notifyFailed(handler, r.failedMessage(body, msgID))
 		return err
 	}
 
@@ -112,6 +102,7 @@ func (r *MqDirect) Consume(handler MsgHandler) error {
 	}
 
 	ctx := r.contextOrBackground()
+	retryAttempt := 0
 
 	for {
 		select {
@@ -122,20 +113,30 @@ func (r *MqDirect) Consume(handler MsgHandler) error {
 
 		ch, err := r.openConsumerChannel()
 		if err != nil {
-			return err
+			if waitErr := r.waitRetry("consume", &retryAttempt, "direct consumer open channel failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		queue, err := r.declareBoundQueue(ch, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume", &retryAttempt, "direct consumer declare queue failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		deliveries, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume", &retryAttempt, "direct consumer start consume failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
+		retryAttempt = 0
 
 		notifyClose := ch.NotifyClose(make(chan *amqp.Error, 1))
 		reconnect := false
@@ -148,7 +149,7 @@ func (r *MqDirect) Consume(handler MsgHandler) error {
 			case err, ok := <-notifyClose:
 				closeAMQPChannel(ch)
 				if ok && err != nil {
-					logger.Infof("direct consumer channel closed: %v", err)
+					currentLogger().Infof("direct consumer channel closed: %v", err)
 				}
 				reconnect = true
 			case msg, ok := <-deliveries:
@@ -180,64 +181,65 @@ func (r *MqDirect) RetryMsg(msg amqp.Delivery, ttl string) error {
 
 func (r *MqDirect) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	ctx := r.contextOrBackground()
+	body := []byte(message)
 
 	select {
 	case <-ctx.Done():
-		notifyFailed(handler, r.failedMessage([]byte(message), ""))
+		notifyFailed(handler, r.failedMessage(body, ""))
 		return r.canceledError("publish delay")
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
-	if err := r.declareExchange(ch); err != nil {
-		return err
-	}
-
 	delayQueue := r.baseName() + ".delay"
-	if _, err := ch.QueueDeclare(
-		delayQueue,
-		true,
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-dead-letter-exchange":    r.ExchangeName,
-			"x-dead-letter-routing-key": r.Routing,
-			"x-max-priority":            simpleQueueMaxPriority,
-		},
-	); err != nil {
-		return err
-	}
-
 	msgID := uuid.NewString()
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		"",
-		delayQueue,
-		true,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "text/plain",
-			MessageId:    msgID,
-			Body:         []byte(message),
-			Expiration:   ttl,
-			Headers: amqp.Table{
-				"x-retry": int32(0),
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
+	err := r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("exchange", ch, r.declareExchange); err != nil {
+			return err
+		}
 
-	if err := waitForDeferredConfirm(ctx, confirmation); err != nil {
-		notifyFailed(handler, r.failedMessage([]byte(message), msgID))
+		if err := r.ensurePublishDeclared("delay:"+delayQueue, ch, func(ch *amqp.Channel) error {
+			_, err := ch.QueueDeclare(
+				delayQueue,
+				true,
+				false,
+				false,
+				false,
+				amqp.Table{
+					"x-dead-letter-exchange":    r.ExchangeName,
+					"x-dead-letter-routing-key": r.Routing,
+					"x-max-priority":            simpleQueueMaxPriority,
+				},
+			)
+			return err
+		}); err != nil {
+			return err
+		}
+
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			"",
+			delayQueue,
+			true,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "text/plain",
+				MessageId:    msgID,
+				Body:         body,
+				Expiration:   ttl,
+				Headers: amqp.Table{
+					"x-retry": int32(0),
+				},
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
+	if err != nil {
+		notifyFailed(handler, r.failedMessage(body, msgID))
 		return err
 	}
 
@@ -254,6 +256,7 @@ func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 	}
 
 	ctx := r.contextOrBackground()
+	retryAttempt := 0
 
 	for {
 		select {
@@ -264,20 +267,30 @@ func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 
 		ch, err := r.openConsumerChannel()
 		if err != nil {
-			return err
+			if waitErr := r.waitRetry("consume fail-to-dlx", &retryAttempt, "direct fail-to-dlx open channel failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		queue, _, err := r.declareDLXTopology(ch)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume fail-to-dlx", &retryAttempt, "direct fail-to-dlx declare topology failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		deliveries, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume fail-to-dlx", &retryAttempt, "direct fail-to-dlx start consume failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
+		retryAttempt = 0
 
 		notifyClose := ch.NotifyClose(make(chan *amqp.Error, 1))
 		reconnect := false
@@ -290,7 +303,7 @@ func (r *MqDirect) ConsumeFailToDlx(handler MsgHandler) error {
 			case err, ok := <-notifyClose:
 				closeAMQPChannel(ch)
 				if ok && err != nil {
-					logger.Infof("direct fail-to-dlx channel closed: %v", err)
+					currentLogger().Infof("direct fail-to-dlx channel closed: %v", err)
 				}
 				reconnect = true
 			case msg, ok := <-deliveries:
@@ -321,6 +334,7 @@ func (r *MqDirect) ConsumeDlx(handler MsgHandler) error {
 	}
 
 	ctx := r.contextOrBackground()
+	retryAttempt := 0
 
 	for {
 		select {
@@ -331,20 +345,30 @@ func (r *MqDirect) ConsumeDlx(handler MsgHandler) error {
 
 		ch, err := r.openConsumerChannel()
 		if err != nil {
-			return err
+			if waitErr := r.waitRetry("consume dlx", &retryAttempt, "direct dlx open channel failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		_, dlqName, err := r.declareDLXTopology(ch)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume dlx", &retryAttempt, "direct dlx declare topology failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		deliveries, err := ch.Consume(dlqName, "", false, false, false, false, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume dlx", &retryAttempt, "direct dlx start consume failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
+		retryAttempt = 0
 
 		notifyClose := ch.NotifyClose(make(chan *amqp.Error, 1))
 		reconnect := false
@@ -357,7 +381,7 @@ func (r *MqDirect) ConsumeDlx(handler MsgHandler) error {
 			case err, ok := <-notifyClose:
 				closeAMQPChannel(ch)
 				if ok && err != nil {
-					logger.Infof("direct dlx consumer channel closed: %v", err)
+					currentLogger().Infof("direct dlx consumer channel closed: %v", err)
 				}
 				reconnect = true
 			case msg, ok := <-deliveries:
@@ -451,7 +475,7 @@ func (r *MqDirect) handleDelivery(msg amqp.Delivery, handler MsgHandler) error {
 
 	if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 		retry := retryCount(msg.Headers)
-		if retry >= Retry {
+		if retry >= r.maxRetry() {
 			notifyFailed(handler, r.failedMessage(msg.Body, msg.MessageId))
 			return msg.Reject(false)
 		}
@@ -459,56 +483,25 @@ func (r *MqDirect) handleDelivery(msg amqp.Delivery, handler MsgHandler) error {
 		headers := copyHeaders(msg.Headers)
 		headers["x-retry"] = retry + 1
 
-		if err := r.publishRetryMessage(msg, headers, "2000"); err != nil {
+		if err := r.publishRetryMessage(msg, headers, r.retryTTL()); err != nil {
 			if nackErr := msg.Nack(false, true); nackErr != nil {
 				return fmt.Errorf("publish retry message: %w; nack original: %v", err, nackErr)
 			}
 			return err
 		}
 
-		return msg.Ack(false)
+		return r.ackAfterRetryPublish(msg)
 	}
 
 	return msg.Ack(false)
 }
 
 func (r *MqDirect) handleDLXDelivery(msg amqp.Delivery, handler MsgHandler) error {
-	select {
-	case <-r.contextOrBackground().Done():
-		if err := msg.Nack(false, true); err != nil {
-			return err
-		}
-		return r.canceledError("consume fail-to-dlx")
-	default:
-	}
-
-	if err := handler.Process(msg.Body, msg.MessageId); err != nil {
-		notifyFailed(handler, r.failedMessage(msg.Body, msg.MessageId))
-		return msg.Reject(false)
-	}
-
-	return msg.Ack(false)
+	return r.RabbitMQ.handleDLXDelivery(msg, handler, "consume fail-to-dlx")
 }
 
 func (r *MqDirect) handleDLQDelivery(msg amqp.Delivery, handler MsgHandler) error {
-	select {
-	case <-r.contextOrBackground().Done():
-		if err := msg.Nack(false, true); err != nil {
-			return err
-		}
-		return r.canceledError("consume dlx")
-	default:
-	}
-
-	if err := handler.Process(msg.Body, msg.MessageId); err != nil {
-		notifyFailed(handler, r.failedMessage(msg.Body, msg.MessageId))
-		if err := msg.Nack(false, true); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	return msg.Ack(false)
+	return r.RabbitMQ.handleDLQDelivery(msg, handler, "consume dlx")
 }
 
 func (r *MqDirect) publishRetryMessage(msg amqp.Delivery, headers amqp.Table, ttl string) error {
@@ -520,59 +513,58 @@ func (r *MqDirect) publishRetryMessage(msg amqp.Delivery, headers amqp.Table, tt
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
-	if err := r.declareExchange(ch); err != nil {
-		return err
-	}
-
 	retryQueue := r.baseName() + ".retry"
-	if _, err := ch.QueueDeclare(
-		retryQueue,
-		true,
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-dead-letter-exchange":    r.ExchangeName,
-			"x-dead-letter-routing-key": r.Routing,
-			"x-max-priority":            simpleQueueMaxPriority,
-		},
-	); err != nil {
-		return err
-	}
-
 	messageID := msg.MessageId
 	if messageID == "" {
 		messageID = uuid.NewString()
 	}
 
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		"",
-		retryQueue,
-		true,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  msg.ContentType,
-			Body:         msg.Body,
-			Headers:      headers,
-			MessageId:    messageID,
-			Timestamp:    time.Now(),
-			Expiration:   ttl,
-			Priority:     msg.Priority,
-		},
-	)
-	if err != nil {
-		return err
-	}
+	return r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("exchange", ch, r.declareExchange); err != nil {
+			return err
+		}
 
-	return waitForDeferredConfirm(ctx, confirmation)
+		if err := r.ensurePublishDeclared("retry:"+retryQueue, ch, func(ch *amqp.Channel) error {
+			_, err := ch.QueueDeclare(
+				retryQueue,
+				true,
+				false,
+				false,
+				false,
+				amqp.Table{
+					"x-dead-letter-exchange":    r.ExchangeName,
+					"x-dead-letter-routing-key": r.Routing,
+					"x-max-priority":            simpleQueueMaxPriority,
+				},
+			)
+			return err
+		}); err != nil {
+			return err
+		}
+
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			"",
+			retryQueue,
+			true,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  msg.ContentType,
+				Body:         msg.Body,
+				Headers:      headers,
+				MessageId:    messageID,
+				Timestamp:    time.Now(),
+				Expiration:   ttl,
+				Priority:     msg.Priority,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
 }
 
 func (r *MqDirect) baseName() string {

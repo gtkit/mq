@@ -17,7 +17,7 @@ type MqSimple struct {
 	*RabbitMQ
 }
 
-func NewPubSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
+func newMqSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
 	queueName = strings.TrimSpace(queueName)
 	if queueName == "" {
 		return nil, fmt.Errorf("queue name is required")
@@ -28,6 +28,10 @@ func NewPubSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
 		return nil, err
 	}
 	option.QueueName = queueName
+	option, err = normalizeOption(option)
+	if err != nil {
+		return nil, err
+	}
 
 	rabbitmq, err := newRabbitMQ(option)
 	if err != nil {
@@ -37,70 +41,59 @@ func NewPubSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
 	return &MqSimple{RabbitMQ: rabbitmq}, nil
 }
 
+func NewPubSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
+	return newMqSimple(queueName, mqURL, opts...)
+}
+
 func NewConsumeSimple(queueName, mqURL string, opts ...Option) (*MqSimple, error) {
-	queueName = strings.TrimSpace(queueName)
-	if queueName == "" {
-		return nil, fmt.Errorf("queue name is required")
-	}
-
-	option, err := newOption(mqURL, opts...)
-	if err != nil {
-		return nil, err
-	}
-	option.QueueName = queueName
-
-	rabbitmq, err := newRabbitMQ(option)
-	if err != nil {
-		return nil, err
-	}
-
-	return &MqSimple{RabbitMQ: rabbitmq}, nil
+	return newMqSimple(queueName, mqURL, opts...)
 }
 
 func (r *MqSimple) Publish(message string, handler MsgHandler) error {
 	ctx := r.contextOrBackground()
+	body := []byte(message)
 
 	select {
 	case <-ctx.Done():
-		notifyFailed(handler, r.failedMessage([]byte(message), ""))
+		notifyFailed(handler, r.failedMessage(body, ""))
 		return r.canceledError("publish")
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
-	if _, err := r.declareQueue(ch, nil); err != nil {
-		return err
-	}
-
 	msgID := uuid.NewString()
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		"",
-		r.QueueName,
-		true,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "text/plain",
-			MessageId:    msgID,
-			Body:         []byte(message),
-			Headers: amqp.Table{
-				"x-retry": int32(0),
-			},
-			Priority: 1,
-		},
-	)
-	if err != nil {
-		return err
-	}
+	err := r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("queue", ch, func(ch *amqp.Channel) error {
+			_, err := r.declareQueue(ch, nil)
+			return err
+		}); err != nil {
+			return err
+		}
 
-	if err := waitForDeferredConfirm(ctx, confirmation); err != nil {
-		notifyFailed(handler, r.failedMessage([]byte(message), msgID))
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			"",
+			r.QueueName,
+			true,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "text/plain",
+				MessageId:    msgID,
+				Body:         body,
+				Headers: amqp.Table{
+					"x-retry": int32(0),
+				},
+				Priority: 1,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
+	if err != nil {
+		notifyFailed(handler, r.failedMessage(body, msgID))
 		return err
 	}
 
@@ -113,6 +106,7 @@ func (r *MqSimple) Consume(handler MsgHandler) error {
 	}
 
 	ctx := r.contextOrBackground()
+	retryAttempt := 0
 
 	for {
 		select {
@@ -123,20 +117,30 @@ func (r *MqSimple) Consume(handler MsgHandler) error {
 
 		ch, err := r.openConsumerChannel()
 		if err != nil {
-			return err
+			if waitErr := r.waitRetry("consume", &retryAttempt, "simple consumer open channel failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		queue, err := r.declareQueue(ch, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume", &retryAttempt, "simple consumer declare queue failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		deliveries, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume", &retryAttempt, "simple consumer start consume failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
+		retryAttempt = 0
 
 		notifyClose := ch.NotifyClose(make(chan *amqp.Error, 1))
 		reconnect := false
@@ -149,7 +153,7 @@ func (r *MqSimple) Consume(handler MsgHandler) error {
 			case err, ok := <-notifyClose:
 				closeAMQPChannel(ch)
 				if ok && err != nil {
-					logger.Infof("simple consumer channel closed: %v", err)
+					currentLogger().Infof("simple consumer channel closed: %v", err)
 				}
 				reconnect = true
 			case msg, ok := <-deliveries:
@@ -181,64 +185,68 @@ func (r *MqSimple) RetryMsg(msg amqp.Delivery, ttl string) error {
 
 func (r *MqSimple) PublishDelay(message string, handler MsgHandler, ttl string) error {
 	ctx := r.contextOrBackground()
+	body := []byte(message)
 
 	select {
 	case <-ctx.Done():
-		notifyFailed(handler, r.failedMessage([]byte(message), ""))
+		notifyFailed(handler, r.failedMessage(body, ""))
 		return r.canceledError("publish delay")
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
-	if _, err := r.declareQueue(ch, nil); err != nil {
-		return err
-	}
-
 	delayQueue := r.QueueName + "-delay"
-	if _, err := ch.QueueDeclare(
-		delayQueue,
-		true,
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-dead-letter-exchange":    "",
-			"x-dead-letter-routing-key": r.QueueName,
-			"x-max-priority":            simpleQueueMaxPriority,
-		},
-	); err != nil {
-		return err
-	}
-
 	msgID := uuid.NewString()
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		"",
-		delayQueue,
-		true,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "text/plain",
-			MessageId:    msgID,
-			Body:         []byte(message),
-			Expiration:   ttl,
-			Headers: amqp.Table{
-				"x-retry": int32(0),
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
+	err := r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("queue", ch, func(ch *amqp.Channel) error {
+			_, err := r.declareQueue(ch, nil)
+			return err
+		}); err != nil {
+			return err
+		}
 
-	if err := waitForDeferredConfirm(ctx, confirmation); err != nil {
-		notifyFailed(handler, r.failedMessage([]byte(message), msgID))
+		if err := r.ensurePublishDeclared("delay:"+delayQueue, ch, func(ch *amqp.Channel) error {
+			_, err := ch.QueueDeclare(
+				delayQueue,
+				true,
+				false,
+				false,
+				false,
+				amqp.Table{
+					"x-dead-letter-exchange":    "",
+					"x-dead-letter-routing-key": r.QueueName,
+					"x-max-priority":            simpleQueueMaxPriority,
+				},
+			)
+			return err
+		}); err != nil {
+			return err
+		}
+
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			"",
+			delayQueue,
+			true,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "text/plain",
+				MessageId:    msgID,
+				Body:         body,
+				Expiration:   ttl,
+				Headers: amqp.Table{
+					"x-retry": int32(0),
+				},
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
+	if err != nil {
+		notifyFailed(handler, r.failedMessage(body, msgID))
 		return err
 	}
 
@@ -258,35 +266,35 @@ func (r *MqSimple) PublishWithDlx(message string) error {
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
-	if _, _, err := r.declareDLXTopology(ch); err != nil {
-		return err
-	}
-
 	msgID := uuid.NewString()
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		"",
-		r.QueueName,
-		true,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "text/plain",
-			MessageId:    msgID,
-			Body:         []byte(message),
-		},
-	)
-	if err != nil {
-		return err
-	}
+	body := []byte(message)
+	return r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("dlx-topology", ch, func(ch *amqp.Channel) error {
+			_, _, err := r.declareDLXTopology(ch)
+			return err
+		}); err != nil {
+			return err
+		}
 
-	return waitForDeferredConfirm(ctx, confirmation)
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			"",
+			r.QueueName,
+			true,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "text/plain",
+				MessageId:    msgID,
+				Body:         body,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
 }
 
 func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
@@ -295,6 +303,7 @@ func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 	}
 
 	ctx := r.contextOrBackground()
+	retryAttempt := 0
 
 	for {
 		select {
@@ -305,20 +314,30 @@ func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 
 		ch, err := r.openConsumerChannel()
 		if err != nil {
-			return err
+			if waitErr := r.waitRetry("consume fail-to-dlx", &retryAttempt, "simple fail-to-dlx open channel failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		queue, _, err := r.declareDLXTopology(ch)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume fail-to-dlx", &retryAttempt, "simple fail-to-dlx declare topology failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		deliveries, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume fail-to-dlx", &retryAttempt, "simple fail-to-dlx start consume failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
+		retryAttempt = 0
 
 		notifyClose := ch.NotifyClose(make(chan *amqp.Error, 1))
 		reconnect := false
@@ -331,7 +350,7 @@ func (r *MqSimple) ConsumeFailToDlx(handler MsgHandler) error {
 			case err, ok := <-notifyClose:
 				closeAMQPChannel(ch)
 				if ok && err != nil {
-					logger.Infof("simple fail-to-dlx channel closed: %v", err)
+					currentLogger().Infof("simple fail-to-dlx channel closed: %v", err)
 				}
 				reconnect = true
 			case msg, ok := <-deliveries:
@@ -362,6 +381,7 @@ func (r *MqSimple) ConsumeDlx(handler MsgHandler) error {
 	}
 
 	ctx := r.contextOrBackground()
+	retryAttempt := 0
 
 	for {
 		select {
@@ -372,20 +392,30 @@ func (r *MqSimple) ConsumeDlx(handler MsgHandler) error {
 
 		ch, err := r.openConsumerChannel()
 		if err != nil {
-			return err
+			if waitErr := r.waitRetry("consume dlx", &retryAttempt, "simple dlx open channel failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		_, dlqName, err := r.declareDLXTopology(ch)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume dlx", &retryAttempt, "simple dlx declare topology failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 
 		deliveries, err := ch.Consume(dlqName, "", false, false, false, false, nil)
 		if err != nil {
 			closeAMQPChannel(ch)
-			return err
+			if waitErr := r.waitRetry("consume dlx", &retryAttempt, "simple dlx start consume failed: %v, reconnecting...", err); waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
+		retryAttempt = 0
 
 		notifyClose := ch.NotifyClose(make(chan *amqp.Error, 1))
 		reconnect := false
@@ -398,7 +428,7 @@ func (r *MqSimple) ConsumeDlx(handler MsgHandler) error {
 			case err, ok := <-notifyClose:
 				closeAMQPChannel(ch)
 				if ok && err != nil {
-					logger.Infof("simple dlx consumer channel closed: %v", err)
+					currentLogger().Infof("simple dlx consumer channel closed: %v", err)
 				}
 				reconnect = true
 			case msg, ok := <-deliveries:
@@ -473,7 +503,7 @@ func (r *MqSimple) handleDelivery(msg amqp.Delivery, handler MsgHandler) error {
 
 	if err := handler.Process(msg.Body, msg.MessageId); err != nil {
 		retry := retryCount(msg.Headers)
-		if retry >= Retry {
+		if retry >= r.maxRetry() {
 			notifyFailed(handler, r.failedMessage(msg.Body, msg.MessageId))
 			return msg.Reject(false)
 		}
@@ -481,56 +511,25 @@ func (r *MqSimple) handleDelivery(msg amqp.Delivery, handler MsgHandler) error {
 		headers := copyHeaders(msg.Headers)
 		headers["x-retry"] = retry + 1
 
-		if err := r.publishRetryMessage(msg, headers, "1000"); err != nil {
+		if err := r.publishRetryMessage(msg, headers, r.retryTTL()); err != nil {
 			if nackErr := msg.Nack(false, true); nackErr != nil {
 				return fmt.Errorf("publish retry message: %w; nack original: %v", err, nackErr)
 			}
 			return err
 		}
 
-		return msg.Ack(false)
+		return r.ackAfterRetryPublish(msg)
 	}
 
 	return msg.Ack(false)
 }
 
 func (r *MqSimple) handleDLXDelivery(msg amqp.Delivery, handler MsgHandler) error {
-	select {
-	case <-r.contextOrBackground().Done():
-		if err := msg.Nack(false, true); err != nil {
-			return err
-		}
-		return r.canceledError("consume fail-to-dlx")
-	default:
-	}
-
-	if err := handler.Process(msg.Body, msg.MessageId); err != nil {
-		notifyFailed(handler, r.failedMessage(msg.Body, msg.MessageId))
-		return msg.Reject(false)
-	}
-
-	return msg.Ack(false)
+	return r.RabbitMQ.handleDLXDelivery(msg, handler, "consume fail-to-dlx")
 }
 
 func (r *MqSimple) handleDLQDelivery(msg amqp.Delivery, handler MsgHandler) error {
-	select {
-	case <-r.contextOrBackground().Done():
-		if err := msg.Nack(false, true); err != nil {
-			return err
-		}
-		return r.canceledError("consume dlx")
-	default:
-	}
-
-	if err := handler.Process(msg.Body, msg.MessageId); err != nil {
-		notifyFailed(handler, r.failedMessage(msg.Body, msg.MessageId))
-		if err := msg.Nack(false, true); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	return msg.Ack(false)
+	return r.RabbitMQ.handleDLQDelivery(msg, handler, "consume dlx")
 }
 
 func (r *MqSimple) publishRetryMessage(msg amqp.Delivery, headers amqp.Table, ttl string) error {
@@ -542,53 +541,52 @@ func (r *MqSimple) publishRetryMessage(msg amqp.Delivery, headers amqp.Table, tt
 	default:
 	}
 
-	ch, err := r.openPublishChannel()
-	if err != nil {
-		return err
-	}
-	defer closeAMQPChannel(ch)
-
 	retryQueue := r.QueueName + "-retry"
-	if _, err := ch.QueueDeclare(
-		retryQueue,
-		true,
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-dead-letter-exchange":    "",
-			"x-dead-letter-routing-key": r.QueueName,
-			"x-max-priority":            simpleQueueMaxPriority,
-		},
-	); err != nil {
-		return err
-	}
-
 	messageID := msg.MessageId
 	if messageID == "" {
 		messageID = uuid.NewString()
 	}
 
-	confirmation, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		"",
-		retryQueue,
-		true,
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  msg.ContentType,
-			Body:         msg.Body,
-			Headers:      headers,
-			MessageId:    messageID,
-			Timestamp:    time.Now(),
-			Expiration:   ttl,
-			Priority:     msg.Priority,
-		},
-	)
-	if err != nil {
-		return err
-	}
+	return r.publishWithChannel(func(ch *amqp.Channel) error {
+		if err := r.ensurePublishDeclared("retry:"+retryQueue, ch, func(ch *amqp.Channel) error {
+			_, err := ch.QueueDeclare(
+				retryQueue,
+				true,
+				false,
+				false,
+				false,
+				amqp.Table{
+					"x-dead-letter-exchange":    "",
+					"x-dead-letter-routing-key": r.QueueName,
+					"x-max-priority":            simpleQueueMaxPriority,
+				},
+			)
+			return err
+		}); err != nil {
+			return err
+		}
 
-	return waitForDeferredConfirm(ctx, confirmation)
+		confirmation, err := ch.PublishWithDeferredConfirmWithContext(
+			ctx,
+			"",
+			retryQueue,
+			true,
+			false,
+			amqp.Publishing{
+				DeliveryMode: amqp.Persistent,
+				ContentType:  msg.ContentType,
+				Body:         msg.Body,
+				Headers:      headers,
+				MessageId:    messageID,
+				Timestamp:    time.Now(),
+				Expiration:   ttl,
+				Priority:     msg.Priority,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return waitForDeferredConfirm(ctx, confirmation)
+	})
 }

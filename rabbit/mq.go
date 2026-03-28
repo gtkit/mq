@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const (
-	Delay = 1
-	Retry = 3
+	defaultMaxRetry = 3
+	defaultRetryTTL = "2000"
 )
 
 type MQOption struct {
@@ -22,11 +21,17 @@ type MQOption struct {
 	MqURL        string
 	ConnName     string
 	Ctx          context.Context
+	MaxRetry     int32
+	RetryTTL     string
 }
 
 type RabbitMQ struct {
 	MQOption
+	connMu    sync.Mutex
+	pubMu     sync.Mutex
 	conn      *amqp.Connection
+	pubCh     *amqp.Channel
+	pubDecls  map[string]struct{}
 	closeOnce sync.Once
 	cancel    context.CancelFunc
 }
@@ -54,33 +59,23 @@ type RabbitMQInterface interface {
 }
 
 func newRabbitMQ(option MQOption) (*RabbitMQ, error) {
-	normalized, err := normalizeOption(option)
-	if err != nil {
-		return nil, err
+	ctx, cancel := context.WithCancel(option.Ctx)
+	option.Ctx = ctx
+
+	rabbitmq := &RabbitMQ{
+		MQOption: option,
+		cancel:   cancel,
 	}
 
-	ctx, cancel := context.WithCancel(normalized.Ctx)
-	normalized.Ctx = ctx
-
-	config := amqp.Config{
-		Vhost:      "/",
-		Properties: amqp.NewConnectionProperties(),
-		Heartbeat:  10 * time.Second,
-		Locale:     "en_US",
-	}
-	config.Properties.SetClientConnectionName(normalized.ConnName)
-
-	conn, err := amqp.DialConfig(normalized.MqURL, config)
+	conn, err := rabbitmq.dial()
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
-	return &RabbitMQ{
-		MQOption: normalized,
-		conn:     conn,
-		cancel:   cancel,
-	}, nil
+	rabbitmq.conn = conn
+
+	return rabbitmq, nil
 }
 
 func (r *RabbitMQ) Destroy() {
@@ -93,9 +88,16 @@ func (r *RabbitMQ) Destroy() {
 			r.cancel()
 		}
 
-		if r.conn != nil {
-			if err := r.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
-				logger.Infof("close connection error: %v", err)
+		r.closePublishChannel()
+
+		r.connMu.Lock()
+		conn := r.conn
+		r.conn = nil
+		r.connMu.Unlock()
+
+		if conn != nil {
+			if err := conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+				currentLogger().Infof("close connection error: %v", err)
 			}
 		}
 	})

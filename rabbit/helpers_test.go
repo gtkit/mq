@@ -18,6 +18,27 @@ func (h *recordingHandler) Failed(msg FailedMsg) {
 	h.failed = append(h.failed, msg)
 }
 
+type stubLogger struct{}
+
+func (stubLogger) Info(args ...any) {}
+
+func (stubLogger) Infof(string, ...any) {}
+
+func (stubLogger) Errorf(string, ...any) {}
+
+type formattedOnlyLogger struct {
+	infofCalls  int
+	errorfCalls int
+}
+
+func (l *formattedOnlyLogger) Infof(string, ...any) {
+	l.infofCalls++
+}
+
+func (l *formattedOnlyLogger) Errorf(string, ...any) {
+	l.errorfCalls++
+}
+
 func TestDestroyIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -95,5 +116,53 @@ func TestPublishOnCanceledContextAllowsNilHandler(t *testing.T) {
 	err := mq.Publish("payload", nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Publish() error = %v, want wrapped context cancellation", err)
+	}
+}
+
+func TestSetLoggerReplacesGlobalLogger(t *testing.T) {
+	t.Parallel()
+
+	original := currentLogger()
+	SetLogger(stubLogger{})
+	t.Cleanup(func() {
+		SetLogger(original)
+	})
+
+	if _, ok := currentLogger().(stubLogger); !ok {
+		t.Fatal("SetLogger() did not replace the global logger")
+	}
+}
+
+func TestSetExternalLoggerAdaptsFormattedLogger(t *testing.T) {
+	t.Parallel()
+
+	original := currentLogger()
+	external := &formattedOnlyLogger{}
+
+	if !SetExternalLogger(external) {
+		t.Fatal("SetExternalLogger() = false, want true")
+	}
+
+	t.Cleanup(func() {
+		SetLogger(original)
+	})
+
+	currentLogger().Info("payload")
+	currentLogger().Errorf("err: %s", "boom")
+
+	if external.infofCalls != 1 {
+		t.Fatalf("Infof() calls = %d, want 1", external.infofCalls)
+	}
+
+	if external.errorfCalls != 1 {
+		t.Fatalf("Errorf() calls = %d, want 1", external.errorfCalls)
+	}
+}
+
+func TestSetExternalLoggerRejectsUnsupportedType(t *testing.T) {
+	t.Parallel()
+
+	if SetExternalLogger(struct{}{}) {
+		t.Fatal("SetExternalLogger() = true, want false")
 	}
 }
