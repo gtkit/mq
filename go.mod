@@ -1,4 +1,4 @@
-module mq
+module github.com/gtkit/mq
 
 go 1.26.1
 
