@@ -1,4 +1,4 @@
 package mq
 
 // Version 表示当前库版本。
-const Version = "v1.0.1"
+const Version = "v1.0.2"
